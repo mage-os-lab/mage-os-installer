@@ -131,25 +131,14 @@ jobs:
           expect eof
           EXPECT_EOF
 
-      - name: Verify Mage-OS is running
+      - name: Run bin/magento to verify installation
         run: |
           sleep 5
-          echo "------- Initial request (no redirect follow) -------"
-          curl -sSk -D /tmp/curl-headers.txt -o /tmp/curl-body.txt https://test-mageos.ddev.site/
-          cat /tmp/curl-headers.txt
-          echo "------- Response body -------"
-          head -200 /tmp/curl-body.txt
-          echo "------- Following redirects -------"
-          HTTP_CODE=$(curl -sSk -L -D /tmp/curl-headers-final.txt -o /tmp/curl-body-final.txt -w "%{http_code}" https://test-mageos.ddev.site/)
-          cat /tmp/curl-headers-final.txt
-          echo "------- Final response body (first 200 lines) -------"
-          head -200 /tmp/curl-body-final.txt
-          echo "------- Final HTTP status: $HTTP_CODE -------"
-          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 400 ]; then
-            echo "Mage-OS is up and running!"
-          else
-            exit 1
-          fi
+          ddev php bin/magento
+
+      - name: Verify Mage-OS is running
+        run: |
+          curl --fail-with-body -v https://test-mageos.ddev.site/ 
 
   release:
     runs-on: ubuntu-latest
