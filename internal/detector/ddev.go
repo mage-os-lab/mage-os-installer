@@ -30,6 +30,7 @@ func (d *DdevDetector) Steps() []Step {
 		{Name: "Start DDEV"},
 		{Name: "Apply RabbitMQ config"},
 		{Name: "Create Mage-OS project"},
+		{Name: "Copy project files"},
 		{Name: "Create composer home directory"},
 		{Name: "Copy auth.json"},
 		{Name: "Install Mage-OS"},
@@ -108,7 +109,11 @@ func (d *DdevDetector) Install(config *Config) error {
 			"ddev", "exec", "composer", "create-project",
 			"--repository-url=https://repo.mage-os.org/",
 			"mage-os/project-community-edition",
-			".",
+			"/tmp/mage-os-project",
+		},
+		{
+			"ddev", "exec", "bash", "-c",
+			"cp -a /tmp/mage-os-project/. /var/www/html/",
 		},
 		{"ddev", "exec", "mkdir", "-p", "/var/www/html/var/composer_home/"},
 	}

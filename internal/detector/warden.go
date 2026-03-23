@@ -114,12 +114,18 @@ func (d *WardenDetector) Install(config *Config) error {
 		},
 		// 4: Create Mage-OS project
 		func() error {
-			return run(
+			if err := run(
 				"warden", "env", "exec", "php-fpm",
 				"composer", "create-project",
 				"--repository-url=https://repo.mage-os.org/",
 				"mage-os/project-community-edition",
-				".",
+				"/tmp/mage-os-project",
+			); err != nil {
+				return err
+			}
+			return run(
+				"warden", "env", "exec", "php-fpm",
+				"bash", "-c", "cp -a /tmp/mage-os-project/. /var/www/html/",
 			)
 		},
 		// 5: Create composer home directory
