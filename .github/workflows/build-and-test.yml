@@ -76,18 +76,22 @@ jobs:
           sudo apt-get install -y expect
           expect <<'EXPECT_EOF'
           set timeout 3600
+          log_user 0
           spawn ./mage-os-install
 
           # Clear default and type a custom project name so a fresh directory is used
           expect "Project name"
+          puts ">>> Entering project name..."
           send "\025test-mageos\r"
 
           # Accept default install directory (will be ./test-mageos)
           expect "Install directory"
+          puts ">>> Accepting install directory..."
           send "\r"
 
           # Setup config form - admin user is focused first (default: admin)
           expect "Configure"
+          puts ">>> Filling in admin credentials..."
           send "\r"
 
           # Admin password (empty by default)
@@ -110,16 +114,18 @@ jobs:
 
           # Setup preview - press enter to start install
           expect "Review"
+          puts ">>> Starting installation..."
           send "\r"
 
           # Wait for installation to complete
           expect {
             -timeout 3600
             "installed successfully" {
+              puts ">>> Installation completed successfully!"
               send "n"
             }
             "Installation failed" {
-              puts "Installation failed!"
+              puts ">>> Installation failed!"
               exit 1
             }
           }
