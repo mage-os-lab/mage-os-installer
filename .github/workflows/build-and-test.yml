@@ -134,11 +134,17 @@ jobs:
       - name: Verify Mage-OS is running
         run: |
           sleep 5
-          curl -sSvk -D - https://test-mageos.ddev.site/ -o /tmp/curl-body.txt 2>&1 | head -50
-          echo "------- Response body (first 200 lines) -------"
+          echo "------- Initial request (no redirect follow) -------"
+          curl -sSk -D /tmp/curl-headers.txt -o /tmp/curl-body.txt https://test-mageos.ddev.site/
+          cat /tmp/curl-headers.txt
+          echo "------- Response body -------"
           head -200 /tmp/curl-body.txt
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -k https://test-mageos.ddev.site/)
-          echo "------- HTTP status: $HTTP_CODE -------"
+          echo "------- Following redirects -------"
+          HTTP_CODE=$(curl -sSk -L -D /tmp/curl-headers-final.txt -o /tmp/curl-body-final.txt -w "%{http_code}" https://test-mageos.ddev.site/)
+          cat /tmp/curl-headers-final.txt
+          echo "------- Final response body (first 200 lines) -------"
+          head -200 /tmp/curl-body-final.txt
+          echo "------- Final HTTP status: $HTTP_CODE -------"
           if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 400 ]; then
             echo "Mage-OS is up and running!"
           else
