@@ -11,7 +11,10 @@ import (
 )
 
 // DdevDetector checks for the DDEV development environment.
-type DdevDetector struct{}
+type DdevDetector struct {
+	// primaryURL is populated after ddev start by querying ddev describe.
+	primaryURL string
+}
 
 func (d *DdevDetector) Info() DetectorInfo {
 	return DetectorInfo{
@@ -42,7 +45,10 @@ func (d *DdevDetector) SetupCommandPrefix() string {
 }
 
 func (d *DdevDetector) BaseURL(projectName string) string {
-	return "https://" + projectName + ".test"
+	if d.primaryURL != "" {
+		return d.primaryURL
+	}
+	return "https://" + projectName + ".ddev.site"
 }
 
 // SetupInstallFlags returns the full ordered list of flags for bin/magento setup:install.
@@ -77,7 +83,7 @@ func (d *DdevDetector) SetupInstallFlags(config *Config) []SetupFlag {
 		{Flag: "--page-cache-redis-server", Value: "redis"},
 		{Flag: "--page-cache-redis-db", Value: "1"},
 		{Flag: "--page-cache-redis-port", Value: "6379"},
-		{Flag: "--base-url", Value: "https://" + config.ProjectName + ".test"},
+		{Flag: "--base-url", Value: d.BaseURL(config.ProjectName)},
 		{Flag: "--timezone", Value: "Europe/Amsterdam"},
 		{Flag: "--currency", Value: "EUR"},
 		{Flag: "--admin-user", Value: config.AdminUser, Editable: true},
@@ -128,6 +134,13 @@ func (d *DdevDetector) Install(config *Config) error {
 			return fmt.Errorf("step %q failed: %w", strings.Join(args, " "), err)
 		}
 		stepDone(config, i)
+	}
+
+	// After ddev start, query the actual primary URL so we use
+	// the correct domain (e.g. .ddev.site) for Magento's base-url.
+	if url, err := ddevPrimaryURL(config.Directory); err == nil {
+		d.primaryURL = url
+		logf(config, "▸ Detected primary URL: %s", url)
 	}
 
 	authIdx := len(steps)
@@ -242,7 +255,8 @@ func copyAuthJSON(config *Config) error {
 // ddevDescribeOutput is the relevant subset of `ddev describe --json-output`.
 type ddevDescribeOutput struct {
 	Raw struct {
-		Services map[string]struct {
+		PrimaryURL string `json:"primary_url"`
+		Services   map[string]struct {
 			FullName string `json:"full_name"`
 		} `json:"services"`
 	} `json:"raw"`
@@ -268,6 +282,27 @@ func ddevWebContainerName(dir string) (string, error) {
 	}
 
 	return web.FullName, nil
+}
+
+// ddevPrimaryURL returns the primary URL of the running ddev project.
+func ddevPrimaryURL(dir string) (string, error) {
+	cmd := exec.Command("ddev", "describe", "--json-output")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("ddev describe failed: %w", err)
+	}
+
+	var desc ddevDescribeOutput
+	if err := json.Unmarshal(out, &desc); err != nil {
+		return "", fmt.Errorf("could not parse ddev describe output: %w", err)
+	}
+
+	if desc.Raw.PrimaryURL == "" {
+		return "", fmt.Errorf("primary_url not found in ddev describe output")
+	}
+
+	return desc.Raw.PrimaryURL, nil
 }
 
 func (d *DdevDetector) Detect() (*Environment, error) {
