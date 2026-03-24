@@ -144,7 +144,16 @@ jobs:
 
       - name: Verify Mage-OS is running
         run: |
-          curl --fail-with-body -v https://test-mageos.ddev.site/ 
+          HTTP_CODE=$(curl -sSk -L -D /tmp/curl-headers.txt -o /tmp/curl-body.txt -w "%{http_code}" https://test-mageos.ddev.site/)
+          echo "------- Response headers -------"
+          cat /tmp/curl-headers.txt
+          echo "------- Response body -------"
+          cat /tmp/curl-body.txt
+          echo "------- Checking HTTP status code -------"
+          echo "HTTP status: $HTTP_CODE"
+          [ "$HTTP_CODE" = "200" ] || { echo "Expected 200, got $HTTP_CODE"; exit 1; }
+          echo "------- Checking x-dist header -------"
+          grep -qi "^x-dist:.*Mage-OS" /tmp/curl-headers.txt || { echo "Expected x-dist: Mage-OS header not found"; exit 1; }
 
   release:
     runs-on: ubuntu-latest
