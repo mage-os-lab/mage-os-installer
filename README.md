@@ -21,16 +21,39 @@ Get up & running with Mage-OS in minutes. If you have DDEV or Warden installed a
 
 ## Installation
 
+Download the latest binary for your platform from the [releases page](https://github.com/mage-os-lab/mage-os-installer/releases/latest).
+
+**macOS (Apple Silicon)**
 ```sh
-go install github.com/mage-os-lab/mage-os-installer@latest
+curl -sL https://github.com/mage-os-lab/mage-os-installer/releases/latest/download/mage-os-installer_$(curl -s https://api.github.com/repos/mage-os-lab/mage-os-installer/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | tr -d v)_darwin_arm64.tar.gz | tar -xz mage-os-install
+sudo mv mage-os-install /usr/local/bin/
 ```
 
-Or build from source:
-
+**macOS (Intel)**
 ```sh
-git clone https://github.com/mage-os/mage-os-install.git
-cd mage-os-install
-go build .
+curl -sL https://github.com/mage-os-lab/mage-os-installer/releases/latest/download/mage-os-installer_$(curl -s https://api.github.com/repos/mage-os-lab/mage-os-installer/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | tr -d v)_darwin_amd64.tar.gz | tar -xz mage-os-install
+sudo mv mage-os-install /usr/local/bin/
+```
+
+**Linux (x86_64)**
+```sh
+curl -sL https://github.com/mage-os-lab/mage-os-installer/releases/latest/download/mage-os-installer_$(curl -s https://api.github.com/repos/mage-os-lab/mage-os-installer/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | tr -d v)_linux_amd64.tar.gz | tar -xz mage-os-install
+sudo mv mage-os-install /usr/local/bin/
+```
+
+**Linux (ARM64)**
+```sh
+curl -sL https://github.com/mage-os-lab/mage-os-installer/releases/latest/download/mage-os-installer_$(curl -s https://api.github.com/repos/mage-os-lab/mage-os-installer/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | tr -d v)_linux_arm64.tar.gz | tar -xz mage-os-install
+sudo mv mage-os-install /usr/local/bin/
+```
+
+**Windows**
+
+Download `mage-os-installer_{version}_windows_amd64.zip` (or `windows_arm64.zip`) from the [releases page](https://github.com/mage-os-lab/mage-os-installer/releases/latest), extract it, and add the directory to your `PATH`.
+
+**Via Go**
+```sh
+go install github.com/mage-os-lab/mage-os-installer@latest
 ```
 
 ## Usage
@@ -50,9 +73,8 @@ The installer will walk you through:
 5. **Command review** -- inspect the `setup:install` flags before running
 6. **Installation** -- watch progress in real time
 
-## TODO/Whishlist
+## Wishlist
 
-- Build pipeline.
-- Toggle sampledata.
+- Toggle sample data.
 - Install Hyvä.
 - Add self-update option.
