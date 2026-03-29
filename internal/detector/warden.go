@@ -114,6 +114,13 @@ func (d *WardenDetector) Install(config *Config) error {
 		},
 		// 4: Create Mage-OS project
 		func() error {
+			// Wait for php-fpm entrypoint to finish setting up composer
+			if err := run(
+				"warden", "env", "exec", "php-fpm",
+				"bash", "-c", "while ! command -v composer &>/dev/null; do sleep 1; done",
+			); err != nil {
+				return err
+			}
 			if err := run(
 				"warden", "env", "exec", "php-fpm",
 				"composer", "create-project",
