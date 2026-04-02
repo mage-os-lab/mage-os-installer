@@ -21,4 +21,12 @@ type Config struct {
 	AdminEmail     string
 	AdminFirstname string
 	AdminLastname  string
+
+	// Sample data
+	InstallSampleData bool
+
+	// Hyvä theme installation
+	InstallHyva   bool
+	HyvaRepoURL   string
+	HyvaAuthToken string
 }

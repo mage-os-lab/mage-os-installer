@@ -85,6 +85,17 @@ type Model struct {
 	installSteps  []installStep
 	installErr    error
 	browserOpened bool
+
+	// Optional feature toggles and Hyvä credentials
+	installSampleData bool
+	installHyva       bool
+	hyvaInputs        []textinput.Model
+	// toggleFocus tracks which toggle/section has focus:
+	//   -2 = sample data toggle
+	//   -1 = hyva toggle
+	//   0+ = hyva input field index
+	toggleFocus    int
+	inTogglePhase  bool // true when focus is in the toggle/hyva section (not admin fields)
 }
 
 // currentDirName returns the base name of the working directory.
@@ -173,6 +184,15 @@ var setupFieldDefs = []struct {
 
 var setupFieldDefaults = []string{"admin", "", "", "Admin", "User"}
 
+// hyvaFieldDefs defines the Hyvä credential fields.
+var hyvaFieldDefs = []struct {
+	label string
+	echo  textinput.EchoMode
+}{
+	{label: "Repo URL", echo: textinput.EchoNormal},
+	{label: "Auth token", echo: textinput.EchoPassword},
+}
+
 // initSetupInputs creates fresh text inputs for the Mage-OS setup form.
 func (m *Model) initSetupInputs() {
 	m.setupInputs = make([]textinput.Model, len(setupFieldDefs))
@@ -187,6 +207,19 @@ func (m *Model) initSetupInputs() {
 		m.setupInputs[i] = ti
 	}
 	m.setupFocus = 0
+
+	// Initialize toggles and Hyvä inputs
+	m.installSampleData = false
+	m.installHyva = false
+	m.inTogglePhase = false
+	m.toggleFocus = -2 // sample data toggle
+	m.hyvaInputs = make([]textinput.Model, len(hyvaFieldDefs))
+	for i, f := range hyvaFieldDefs {
+		ti := textinput.New()
+		ti.EchoMode = f.echo
+		ti.CharLimit = 256
+		m.hyvaInputs[i] = ti
+	}
 }
 
 // focusSetupInput focuses the input at index and blurs all others.
@@ -201,17 +234,61 @@ func (m *Model) focusSetupInput(index int) {
 	m.setupFocus = index
 }
 
+// focusAbsolutePos sets focus based on absolute position across all form fields.
+// Layout: [admin fields...] [sampledata toggle] [hyva toggle] [hyva fields if enabled...]
+func (m *Model) focusAbsolutePos(pos int) {
+	// Blur everything
+	for i := range m.setupInputs {
+		m.setupInputs[i].Blur()
+	}
+	for i := range m.hyvaInputs {
+		m.hyvaInputs[i].Blur()
+	}
+
+	sampleDataPos := len(m.setupInputs)
+	hyvaTogglePos := sampleDataPos + 1
+
+	if pos < sampleDataPos {
+		// Admin field
+		m.inTogglePhase = false
+		m.setupFocus = pos
+		m.setupInputs[pos].Focus()
+	} else if pos == sampleDataPos {
+		// Sample data toggle
+		m.inTogglePhase = true
+		m.toggleFocus = -2
+	} else if pos == hyvaTogglePos {
+		// Hyva toggle
+		m.inTogglePhase = true
+		m.toggleFocus = -1
+	} else {
+		// Hyva input field
+		m.inTogglePhase = true
+		m.toggleFocus = pos - hyvaTogglePos - 1
+		if m.toggleFocus < len(m.hyvaInputs) {
+			m.hyvaInputs[m.toggleFocus].Focus()
+		}
+	}
+}
+
 // buildInstallConfig builds a Config from the current form and input values.
 func (m *Model) buildInstallConfig() detector.Config {
-	return detector.Config{
-		ProjectName:    m.nameInput.Value(),
-		Directory:      m.dirInput.Value(),
-		AdminUser:      m.setupInputs[0].Value(),
-		AdminPassword:  m.setupInputs[1].Value(),
-		AdminEmail:     m.setupInputs[2].Value(),
-		AdminFirstname: m.setupInputs[3].Value(),
-		AdminLastname:  m.setupInputs[4].Value(),
+	cfg := detector.Config{
+		ProjectName:       m.nameInput.Value(),
+		Directory:         m.dirInput.Value(),
+		AdminUser:         m.setupInputs[0].Value(),
+		AdminPassword:     m.setupInputs[1].Value(),
+		AdminEmail:        m.setupInputs[2].Value(),
+		AdminFirstname:    m.setupInputs[3].Value(),
+		AdminLastname:     m.setupInputs[4].Value(),
+		InstallSampleData: m.installSampleData,
+		InstallHyva:       m.installHyva,
 	}
+	if m.installHyva {
+		cfg.HyvaRepoURL = m.hyvaInputs[0].Value()
+		cfg.HyvaAuthToken = m.hyvaInputs[1].Value()
+	}
+	return cfg
 }
 
 // advanceFromDetection moves the model to the correct phase based on
@@ -392,40 +469,121 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle setup config form
 	if m.phase == phaseSetupConfig {
 		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			// Total fields: admin fields + sample data toggle + hyva toggle + (hyva fields if enabled)
+			totalFields := len(m.setupInputs) + 2 // +2 for both toggles
+			if m.installHyva {
+				totalFields += len(m.hyvaInputs)
+			}
+
+			// Calculate current absolute position
+			absPos := m.setupFocus
+			if m.inTogglePhase {
+				switch {
+				case m.toggleFocus == -2: // sample data toggle
+					absPos = len(m.setupInputs)
+				case m.toggleFocus == -1: // hyva toggle
+					absPos = len(m.setupInputs) + 1
+				default: // hyva input field
+					absPos = len(m.setupInputs) + 2 + m.toggleFocus
+				}
+			}
+
 			switch keyMsg.String() {
 			case "tab", "down":
-				m.focusSetupInput((m.setupFocus + 1) % len(m.setupInputs))
+				newPos := absPos + 1
+				if newPos >= totalFields {
+					newPos = 0
+				}
+				m.focusAbsolutePos(newPos)
 				return m, textinput.Blink
 			case "shift+tab", "up":
-				m.focusSetupInput((m.setupFocus - 1 + len(m.setupInputs)) % len(m.setupInputs))
+				newPos := absPos - 1
+				if newPos < 0 {
+					newPos = totalFields - 1
+				}
+				m.focusAbsolutePos(newPos)
 				return m, textinput.Blink
 			case "enter":
-				if m.setupFocus == len(m.setupInputs)-1 {
+				// On the sample data toggle, toggle it
+				if m.inTogglePhase && m.toggleFocus == -2 {
+					m.installSampleData = !m.installSampleData
+					return m, nil
+				}
+				// On the hyva toggle, toggle it
+				if m.inTogglePhase && m.toggleFocus == -1 {
+					m.installHyva = !m.installHyva
+					if m.installHyva {
+						m.toggleFocus = 0
+						m.hyvaInputs[0].Focus()
+					}
+					return m, textinput.Blink
+				}
+				// On the last field, submit
+				if absPos == totalFields-1 {
+					// Validate admin fields
 					for i, f := range setupFieldDefs {
 						if strings.TrimSpace(m.setupInputs[i].Value()) == "" {
 							m.setupError = f.label + " is required"
-							m.focusSetupInput(i)
+							m.focusAbsolutePos(i)
 							return m, textinput.Blink
+						}
+					}
+					// Validate Hyva fields if enabled
+					if m.installHyva {
+						for i, f := range hyvaFieldDefs {
+							if strings.TrimSpace(m.hyvaInputs[i].Value()) == "" {
+								m.setupError = "Hyvä " + f.label + " is required"
+								m.focusAbsolutePos(len(m.setupInputs) + 2 + i)
+								return m, textinput.Blink
+							}
 						}
 					}
 					m.setupError = ""
 					m.installCfg = m.buildInstallConfig()
+					m.selected.Detector.PrepareSteps(&m.installCfg)
 					m.previewScroll = 0
 					m.phase = phaseSetupPreview
 					return m, nil
 				}
-				m.focusSetupInput(m.setupFocus + 1)
+				// Move to next field
+				m.focusAbsolutePos(absPos + 1)
 				return m, textinput.Blink
+			case " ":
+				// Space on toggles
+				if m.inTogglePhase && m.toggleFocus == -2 {
+					m.installSampleData = !m.installSampleData
+					return m, nil
+				}
+				if m.inTogglePhase && m.toggleFocus == -1 {
+					m.installHyva = !m.installHyva
+					return m, nil
+				}
+				// Fall through to default for text input
+				fallthrough
 			default:
-				var cmd tea.Cmd
-				m.setupInputs[m.setupFocus], cmd = m.setupInputs[m.setupFocus].Update(msg)
-				return m, cmd
+				if m.inTogglePhase && m.toggleFocus >= 0 {
+					var cmd tea.Cmd
+					m.hyvaInputs[m.toggleFocus], cmd = m.hyvaInputs[m.toggleFocus].Update(msg)
+					return m, cmd
+				}
+				if !m.inTogglePhase {
+					var cmd tea.Cmd
+					m.setupInputs[m.setupFocus], cmd = m.setupInputs[m.setupFocus].Update(msg)
+					return m, cmd
+				}
 			}
 		}
 		// Forward non-key messages (e.g. blink) to focused input
-		var cmd tea.Cmd
-		m.setupInputs[m.setupFocus], cmd = m.setupInputs[m.setupFocus].Update(msg)
-		return m, cmd
+		if m.inTogglePhase && m.toggleFocus >= 0 {
+			var cmd tea.Cmd
+			m.hyvaInputs[m.toggleFocus], cmd = m.hyvaInputs[m.toggleFocus].Update(msg)
+			return m, cmd
+		}
+		if !m.inTogglePhase {
+			var cmd tea.Cmd
+			m.setupInputs[m.setupFocus], cmd = m.setupInputs[m.setupFocus].Update(msg)
+			return m, cmd
+		}
 	}
 
 	// Handle setup preview
@@ -550,17 +708,48 @@ func (m Model) View() string {
 
 	case phaseSetupConfig:
 		b.WriteString("Configure Mage-OS:\n\n")
-		const labelWidth = 15
+		const labelWidth = 18
 		for i, f := range setupFieldDefs {
 			b.WriteString(fmt.Sprintf("  %-*s  ", labelWidth, f.label))
 			b.WriteString(m.setupInputs[i].View())
 			b.WriteString("\n")
 		}
 		b.WriteString("\n")
+		// Sample data toggle
+		sdCheckbox := "[ ]"
+		if m.installSampleData {
+			sdCheckbox = "[x]"
+		}
+		sdStyle := dimStyle
+		if m.inTogglePhase && m.toggleFocus == -2 {
+			sdStyle = selectedItemStyle
+		}
+		b.WriteString(sdStyle.Render(fmt.Sprintf("  %-*s  %s", labelWidth, "Install sample data", sdCheckbox)))
+		b.WriteString("\n")
+		// Hyva toggle
+		hyvaCheckbox := "[ ]"
+		if m.installHyva {
+			hyvaCheckbox = "[x]"
+		}
+		hyvaStyle := dimStyle
+		if m.inTogglePhase && m.toggleFocus == -1 {
+			hyvaStyle = selectedItemStyle
+		}
+		b.WriteString(hyvaStyle.Render(fmt.Sprintf("  %-*s  %s", labelWidth, "Install Hyvä", hyvaCheckbox)))
+		b.WriteString("\n")
+		// Hyva credential fields (shown only when enabled)
+		if m.installHyva {
+			for i, f := range hyvaFieldDefs {
+				b.WriteString(fmt.Sprintf("  %-*s  ", labelWidth, "    "+f.label))
+				b.WriteString(m.hyvaInputs[i].View())
+				b.WriteString("\n")
+			}
+		}
+		b.WriteString("\n")
 		if m.setupError != "" {
 			b.WriteString(errorStyle.Render("  ✗ "+m.setupError) + "\n\n")
 		}
-		b.WriteString(dimStyle.Render("Tab/↑↓ to move · Enter to review command · ctrl+c to quit"))
+		b.WriteString(dimStyle.Render("Tab/↑↓ to move · Space/Enter to toggle options · Enter to review command · ctrl+c to quit"))
 
 	case phaseSetupPreview:
 		b.WriteString("Review the setup command:\n\n")

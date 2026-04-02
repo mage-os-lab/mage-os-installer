@@ -19,6 +19,7 @@ type mockDetector struct {
 
 func (d *mockDetector) Info() detector.DetectorInfo            { return d.info }
 func (d *mockDetector) Steps() []detector.Step                 { return nil }
+func (d *mockDetector) PrepareSteps(_ *detector.Config)        {}
 func (d *mockDetector) Detect() (*detector.Environment, error) { return d.env, nil }
 func (d *mockDetector) Install(cfg *detector.Config) error     { return d.installErr }
 func (d *mockDetector) SetupInstallFlags(_ *detector.Config) []detector.SetupFlag {

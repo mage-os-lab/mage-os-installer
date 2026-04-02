@@ -14,6 +14,8 @@ import (
 type DdevDetector struct {
 	// primaryURL is populated after ddev start by querying ddev describe.
 	primaryURL string
+	// steps is the list of installation steps, built dynamically based on config.
+	steps []Step
 }
 
 func (d *DdevDetector) Info() DetectorInfo {
@@ -24,7 +26,15 @@ func (d *DdevDetector) Info() DetectorInfo {
 }
 
 func (d *DdevDetector) Steps() []Step {
-	return []Step{
+	return d.steps
+}
+
+func (d *DdevDetector) PrepareSteps(config *Config) {
+	d.buildSteps(config)
+}
+
+func (d *DdevDetector) buildSteps(config *Config) {
+	d.steps = []Step{
 		{Name: "Configure DDEV project"},
 		{Name: "Install OpenSearch addon"},
 		{Name: "Install Redis addon"},
@@ -37,6 +47,16 @@ func (d *DdevDetector) Steps() []Step {
 		{Name: "Create composer home directory"},
 		{Name: "Copy auth.json"},
 		{Name: "Install Mage-OS"},
+	}
+	if config != nil && config.InstallSampleData {
+		d.steps = append(d.steps, Step{Name: "Install sample data"})
+	}
+	if config != nil && config.InstallHyva {
+		d.steps = append(d.steps,
+			Step{Name: "Configure Hyvä repository"},
+			Step{Name: "Install Hyvä theme"},
+			Step{Name: "Enable Hyvä modules"},
+		)
 	}
 }
 
@@ -96,6 +116,8 @@ func (d *DdevDetector) SetupInstallFlags(config *Config) []SetupFlag {
 }
 
 func (d *DdevDetector) Install(config *Config) error {
+	d.buildSteps(config)
+
 	steps := [][]string{
 		{
 			"ddev", "config",
@@ -166,7 +188,112 @@ func (d *DdevDetector) Install(config *Config) error {
 		stepDone(config, magentoIdx)
 	}
 
+	nextIdx := magentoIdx + 1
+
+	if config.InstallSampleData {
+		sampleDataIdx := nextIdx
+		if sampleDataIdx >= config.StartFromStep {
+			stepStart(config, sampleDataIdx)
+			logf(config, "▸ Deploying sample data")
+			if err := runInDir(config.Directory, config.Log,
+				"ddev", "exec", "bin/magento", "sampledata:deploy"); err != nil {
+				return fmt.Errorf("sampledata:deploy failed: %w", err)
+			}
+			// If no Hyvä, run setup:upgrade + cache:flush now.
+			// If Hyvä is also enabled, setup:upgrade runs in the Hyvä enable step.
+			if !config.InstallHyva {
+				if err := runInDir(config.Directory, config.Log,
+					"ddev", "exec", "bin/magento", "setup:upgrade"); err != nil {
+					return fmt.Errorf("setup:upgrade failed: %w", err)
+				}
+				if err := runInDir(config.Directory, config.Log,
+					"ddev", "exec", "bin/magento", "cache:flush"); err != nil {
+					return fmt.Errorf("cache:flush failed: %w", err)
+				}
+			}
+			stepDone(config, sampleDataIdx)
+		}
+		nextIdx++
+	}
+
+	if config.InstallHyva {
+		hyvaRepoIdx := nextIdx
+		if hyvaRepoIdx >= config.StartFromStep {
+			stepStart(config, hyvaRepoIdx)
+			logf(config, "▸ Configuring Hyvä Private Packagist repository")
+			if err := runInDir(config.Directory, config.Log,
+				"ddev", "exec", "composer", "config", "repositories.private-packagist",
+				"composer", config.HyvaRepoURL); err != nil {
+				return fmt.Errorf("configure Hyvä repository failed: %w", err)
+			}
+			if err := runInDir(config.Directory, config.Log,
+				"ddev", "exec", "composer", "config", "--auth",
+				"http-basic."+extractHost(config.HyvaRepoURL),
+				"token", config.HyvaAuthToken); err != nil {
+				return fmt.Errorf("configure Hyvä auth failed: %w", err)
+			}
+			stepDone(config, hyvaRepoIdx)
+		}
+		nextIdx++
+
+		hyvaInstallIdx := nextIdx
+		if hyvaInstallIdx >= config.StartFromStep {
+			stepStart(config, hyvaInstallIdx)
+			logf(config, "▸ Installing Hyvä theme")
+			if err := runInDir(config.Directory, config.Log,
+				"ddev", "exec", "composer", "require", "hyva-themes/magento2-default-theme"); err != nil {
+				return fmt.Errorf("install Hyvä theme failed: %w", err)
+			}
+			stepDone(config, hyvaInstallIdx)
+		}
+		nextIdx++
+
+		hyvaEnableIdx := nextIdx
+		if hyvaEnableIdx >= config.StartFromStep {
+			stepStart(config, hyvaEnableIdx)
+			logf(config, "▸ Enabling Hyvä modules and setting up theme")
+			if err := runInDir(config.Directory, config.Log,
+				"ddev", "exec", "bin/magento", "module:enable", "--all"); err != nil {
+				return fmt.Errorf("enable Hyvä modules failed: %w", err)
+			}
+			if err := runInDir(config.Directory, config.Log,
+				"ddev", "exec", "bin/magento", "setup:upgrade"); err != nil {
+				return fmt.Errorf("setup:upgrade failed: %w", err)
+			}
+			// Look up the Hyvä theme ID and set it as default
+			logf(config, "▸ Setting Hyvä as default storefront theme")
+			themeID, err := ddevQueryThemeID(config.Directory, "Hyva/default")
+			if err != nil {
+				return fmt.Errorf("could not find Hyvä theme ID: %w", err)
+			}
+			logf(config, "▸ Hyvä theme ID: %s", themeID)
+			if err := runInDir(config.Directory, config.Log,
+				"ddev", "exec", "bin/magento", "config:set", "design/theme/theme_id", themeID); err != nil {
+				return fmt.Errorf("set Hyvä theme failed: %w", err)
+			}
+			if err := runInDir(config.Directory, config.Log,
+				"ddev", "exec", "bin/magento", "cache:flush"); err != nil {
+				return fmt.Errorf("cache:flush failed: %w", err)
+			}
+			stepDone(config, hyvaEnableIdx)
+		}
+	}
+
 	return nil
+}
+
+// extractHost extracts the hostname from a URL string.
+func extractHost(rawURL string) string {
+	// Strip protocol prefix
+	host := rawURL
+	if i := strings.Index(host, "://"); i >= 0 {
+		host = host[i+3:]
+	}
+	// Strip path
+	if i := strings.Index(host, "/"); i >= 0 {
+		host = host[:i]
+	}
+	return host
 }
 
 // logf sends a formatted message to config.Log if it is set.
@@ -303,6 +430,23 @@ func ddevPrimaryURL(dir string) (string, error) {
 	}
 
 	return desc.Raw.PrimaryURL, nil
+}
+
+// ddevQueryThemeID queries the database via ddev mysql for the given theme path
+// and returns its numeric ID as a string.
+func ddevQueryThemeID(dir, themePath string) (string, error) {
+	cmd := exec.Command("ddev", "mysql", "-N", "-e",
+		fmt.Sprintf("SELECT theme_id FROM theme WHERE theme_path='%s'", themePath))
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("ddev mysql query failed: %w", err)
+	}
+	id := strings.TrimSpace(string(out))
+	if id == "" {
+		return "", fmt.Errorf("theme %q not found in database", themePath)
+	}
+	return id, nil
 }
 
 func (d *DdevDetector) Detect() (*Environment, error) {

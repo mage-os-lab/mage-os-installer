@@ -29,6 +29,9 @@ type SetupFlag struct {
 type Detector interface {
 	Info() DetectorInfo
 	Steps() []Step
+	// PrepareSteps builds the step list based on the given config.
+	// Must be called before Steps() to get accurate results.
+	PrepareSteps(config *Config)
 	Detect() (*Environment, error)
 	Install(config *Config) error
 	// SetupInstallFlags returns the ordered list of flags for bin/magento setup:install.

@@ -9,7 +9,9 @@ import (
 )
 
 // WardenDetector checks for the Warden development environment.
-type WardenDetector struct{}
+type WardenDetector struct {
+	steps []Step
+}
 
 func (d *WardenDetector) Info() DetectorInfo {
 	return DetectorInfo{
@@ -19,7 +21,15 @@ func (d *WardenDetector) Info() DetectorInfo {
 }
 
 func (d *WardenDetector) Steps() []Step {
-	return []Step{
+	return d.steps
+}
+
+func (d *WardenDetector) PrepareSteps(config *Config) {
+	d.buildSteps(config)
+}
+
+func (d *WardenDetector) buildSteps(config *Config) {
+	d.steps = []Step{
 		{Name: "Initialize Warden environment"},
 		{Name: "Sign SSL certificates"},
 		{Name: "Start environment"},
@@ -30,6 +40,16 @@ func (d *WardenDetector) Steps() []Step {
 		{Name: "Install Mage-OS"},
 		{Name: "Configure application"},
 		{Name: "Set developer mode"},
+	}
+	if config != nil && config.InstallSampleData {
+		d.steps = append(d.steps, Step{Name: "Install sample data"})
+	}
+	if config != nil && config.InstallHyva {
+		d.steps = append(d.steps,
+			Step{Name: "Configure Hyvä repository"},
+			Step{Name: "Install Hyvä theme"},
+			Step{Name: "Enable Hyvä modules"},
+		)
 	}
 }
 
@@ -84,6 +104,8 @@ func (d *WardenDetector) SetupInstallFlags(config *Config) []SetupFlag {
 }
 
 func (d *WardenDetector) Install(config *Config) error {
+	d.buildSteps(config)
+
 	run := func(args ...string) error {
 		logf(config, "▸ %s", strings.Join(args, " "))
 		return runInDir(config.Directory, config.Log, args[0], args[1:]...)
@@ -192,6 +214,70 @@ func (d *WardenDetector) Install(config *Config) error {
 			return run("warden", "env", "exec", "php-fpm",
 				"bin/magento", "cache:flush")
 		},
+	}
+
+	if config.InstallSampleData {
+		allSteps = append(allSteps, func() error {
+			logf(config, "▸ Deploying sample data")
+			if err := run("warden", "env", "exec", "php-fpm",
+				"bin/magento", "sampledata:deploy"); err != nil {
+				return err
+			}
+			// If no Hyvä, run setup:upgrade + cache:flush now.
+			// If Hyvä is also enabled, setup:upgrade runs in the Hyvä enable step.
+			if !config.InstallHyva {
+				if err := run("warden", "env", "exec", "php-fpm",
+					"bin/magento", "setup:upgrade"); err != nil {
+					return err
+				}
+				return run("warden", "env", "exec", "php-fpm",
+					"bin/magento", "cache:flush")
+			}
+			return nil
+		})
+	}
+
+	if config.InstallHyva {
+		// Configure Hyvä repository
+		allSteps = append(allSteps, func() error {
+			logf(config, "▸ Configuring Hyvä Private Packagist repository")
+			if err := run("warden", "env", "exec", "php-fpm",
+				"composer", "config", "repositories.private-packagist",
+				"composer", config.HyvaRepoURL); err != nil {
+				return err
+			}
+			return run("warden", "env", "exec", "php-fpm",
+				"composer", "config", "--auth",
+				"http-basic."+extractHost(config.HyvaRepoURL),
+				"token", config.HyvaAuthToken)
+		})
+		// Install Hyvä theme
+		allSteps = append(allSteps, func() error {
+			logf(config, "▸ Installing Hyvä theme")
+			return run("warden", "env", "exec", "php-fpm",
+				"composer", "require", "hyva-themes/magento2-default-theme")
+		})
+		// Enable Hyvä modules
+		allSteps = append(allSteps, func() error {
+			logf(config, "▸ Enabling Hyvä modules and setting up theme")
+			if err := run("warden", "env", "exec", "php-fpm",
+				"bin/magento", "module:enable", "--all"); err != nil {
+				return err
+			}
+			if err := run("warden", "env", "exec", "php-fpm",
+				"bin/magento", "setup:upgrade"); err != nil {
+				return err
+			}
+			// Look up the Hyvä theme ID and set it as default
+			logf(config, "▸ Setting Hyvä as default storefront theme")
+			if err := run("warden", "env", "exec", "php-fpm",
+				"bash", "-c",
+				`THEME_ID=$(mysql -h db -u magento -pmagento magento -N -e "SELECT theme_id FROM theme WHERE theme_path='Hyva/default'" 2>/dev/null) && bin/magento config:set design/theme/theme_id "$THEME_ID"`); err != nil {
+				return err
+			}
+			return run("warden", "env", "exec", "php-fpm",
+				"bin/magento", "cache:flush")
+		})
 	}
 
 	for i, fn := range allSteps {
