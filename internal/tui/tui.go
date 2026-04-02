@@ -504,19 +504,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.focusAbsolutePos(newPos)
 				return m, textinput.Blink
 			case "enter":
-				// On the sample data toggle, toggle it
-				if m.inTogglePhase && m.toggleFocus == -2 {
-					m.installSampleData = !m.installSampleData
-					return m, nil
-				}
-				// On the hyva toggle, toggle it
-				if m.inTogglePhase && m.toggleFocus == -1 {
-					m.installHyva = !m.installHyva
-					if m.installHyva {
-						m.toggleFocus = 0
-						m.hyvaInputs[0].Focus()
+				// On toggles, Enter advances to the next field (use Space to toggle)
+				if m.inTogglePhase && (m.toggleFocus == -2 || m.toggleFocus == -1) {
+					// If this toggle is the last field, submit
+					if absPos == totalFields-1 {
+						// fall through to submit logic below
+					} else {
+						m.focusAbsolutePos(absPos + 1)
+						return m, textinput.Blink
 					}
-					return m, textinput.Blink
 				}
 				// On the last field, submit
 				if absPos == totalFields-1 {
@@ -749,7 +745,7 @@ func (m Model) View() string {
 		if m.setupError != "" {
 			b.WriteString(errorStyle.Render("  ✗ "+m.setupError) + "\n\n")
 		}
-		b.WriteString(dimStyle.Render("Tab/↑↓ to move · Space/Enter to toggle options · Enter to review command · ctrl+c to quit"))
+		b.WriteString(dimStyle.Render("Tab/↑↓/Enter to move · Space to toggle options · Enter to review command · ctrl+c to quit"))
 
 	case phaseSetupPreview:
 		b.WriteString("Review the setup command:\n\n")

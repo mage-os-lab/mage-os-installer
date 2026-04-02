@@ -51,7 +51,7 @@ jobs:
       - name: Check if this variant should run
         id: should-run
         run: |
-          if [[ "${{ matrix.hyva }}" == "true" && -z "${{ vars.HYVA_REPO_URL }}" ]]; then
+          if [[ "${{ matrix.hyva }}" == "true" && -z "${{ secrets.HYVA_REPO_URL }}" ]]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "Skipping Hyvä variant because HYVA_REPO_URL is not configured"
           fi
@@ -90,7 +90,7 @@ jobs:
         env:
           SAMPLE_DATA: ${{ matrix.sample_data }}
           HYVA: ${{ matrix.hyva }}
-          HYVA_REPO_URL: ${{ vars.HYVA_REPO_URL }}
+          HYVA_REPO_URL: ${{ secrets.HYVA_REPO_URL }}
           HYVA_AUTH_TOKEN: ${{ secrets.HYVA_AUTH_TOKEN }}
         run: |
           sudo apt-get install -y expect
@@ -254,7 +254,7 @@ jobs:
       - name: Check if this variant should run
         id: should-run
         run: |
-          if [[ "${{ matrix.hyva }}" == "true" && -z "${{ vars.HYVA_REPO_URL }}" ]]; then
+          if [[ "${{ matrix.hyva }}" == "true" && -z "${{ secrets.HYVA_REPO_URL }}" ]]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "Skipping Hyvä variant because HYVA_REPO_URL is not configured"
           fi
@@ -297,7 +297,7 @@ jobs:
         env:
           SAMPLE_DATA: ${{ matrix.sample_data }}
           HYVA: ${{ matrix.hyva }}
-          HYVA_REPO_URL: ${{ vars.HYVA_REPO_URL }}
+          HYVA_REPO_URL: ${{ secrets.HYVA_REPO_URL }}
           HYVA_AUTH_TOKEN: ${{ secrets.HYVA_AUTH_TOKEN }}
         run: |
           sudo apt-get install -y expect
