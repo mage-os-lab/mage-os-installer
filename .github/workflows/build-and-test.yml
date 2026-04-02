@@ -403,7 +403,7 @@ jobs:
         run: |
           sleep 5
           cd test-mageos
-          /opt/warden/bin/warden env exec php-fpm bin/magento --version
+          /opt/warden/bin/warden env exec -T php-fpm bin/magento --version
 
       - name: Verify Mage-OS is running
         if: steps.should-run.outputs.skip != 'true'
@@ -423,7 +423,7 @@ jobs:
         if: steps.should-run.outputs.skip != 'true' && matrix.sample_data == 'true'
         run: |
           cd test-mageos
-          PRODUCT_COUNT=$(/opt/warden/bin/warden env exec php-fpm bin/magento catalog:product:count 2>/dev/null || /opt/warden/bin/warden env exec php-fpm mysql -h db -u magento -pmagento magento -N -e "SELECT COUNT(*) FROM catalog_product_entity")
+          PRODUCT_COUNT=$(/opt/warden/bin/warden env exec -T db mysql -u magento -pmagento magento -N -e "SELECT COUNT(*) FROM catalog_product_entity")
           echo "Product count: $PRODUCT_COUNT"
           [ "$PRODUCT_COUNT" -gt 0 ] || { echo "Expected products from sample data, found none"; exit 1; }
 
@@ -431,8 +431,8 @@ jobs:
         if: steps.should-run.outputs.skip != 'true' && matrix.hyva == 'true'
         run: |
           cd test-mageos
-          THEME=$(/opt/warden/bin/warden env exec php-fpm mysql -h db -u magento -pmagento magento -N -e "SELECT value FROM core_config_data WHERE path='design/theme/theme_id'" 2>/dev/null)
-          THEME_PATH=$(/opt/warden/bin/warden env exec php-fpm mysql -h db -u magento -pmagento magento -N -e "SELECT theme_path FROM theme WHERE theme_id=$THEME" 2>/dev/null)
+          THEME=$(/opt/warden/bin/warden env exec -T db mysql -u magento -pmagento magento -N -e "SELECT value FROM core_config_data WHERE path='design/theme/theme_id'")
+          THEME_PATH=$(/opt/warden/bin/warden env exec -T db mysql -u magento -pmagento magento -N -e "SELECT theme_path FROM theme WHERE theme_id=$THEME")
           echo "Active theme: $THEME_PATH"
           [ "$THEME_PATH" = "Hyva/default" ] || { echo "Expected Hyva/default theme, got $THEME_PATH"; exit 1; }
 
