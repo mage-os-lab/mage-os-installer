@@ -722,6 +722,12 @@ func (m Model) View() string {
 		}
 		b.WriteString(sdStyle.Render(fmt.Sprintf("  %-*s  %s", labelWidth, "Install sample data", sdCheckbox)))
 		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("                      Adds demo products, categories, and customers so you can"))
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("                      explore a fully populated store right away. Recommended"))
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("                      for your first install to see how everything works."))
+		b.WriteString("\n\n")
 		// Hyva toggle
 		hyvaCheckbox := "[ ]"
 		if m.installHyva {
@@ -732,6 +738,16 @@ func (m Model) View() string {
 			hyvaStyle = selectedItemStyle
 		}
 		b.WriteString(hyvaStyle.Render(fmt.Sprintf("  %-*s  %s", labelWidth, "Install Hyvä", hyvaCheckbox)))
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("                      Hyvä is a modern, fast frontend theme that replaces the"))
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("                      default Luma theme. It uses Tailwind CSS and Alpine.js,"))
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("                      making frontend development much more enjoyable."))
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("                      ⚠ Hyvä requires a (free) license. Register at hyva.io and have"))
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("                      your repo URL and auth token ready before continuing."))
 		b.WriteString("\n")
 		// Hyva credential fields (shown only when enabled)
 		if m.installHyva {
