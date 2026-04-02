@@ -25,31 +25,31 @@ Download the latest binary for your platform from the [releases page](https://gi
 
 **macOS (Apple Silicon)**
 ```sh
-curl -sL https://github.com/mage-os-lab/mage-os-installer/releases/latest/download/mage-os-installer_$(curl -s https://api.github.com/repos/mage-os-lab/mage-os-installer/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | tr -d v)_darwin_arm64.tar.gz | tar -xz mage-os-install
-sudo mv mage-os-install /usr/local/bin/
+sudo curl -sL -o /usr/local/bin/mage-os-install https://github.com/mage-os-lab/mage-os-installer/releases/latest/download/mage-os-install_$(curl -s https://api.github.com/repos/mage-os-lab/mage-os-installer/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | tr -d v)_darwin_arm64
+sudo chmod +x /usr/local/bin/mage-os-install
 ```
 
 **macOS (Intel)**
 ```sh
-curl -sL https://github.com/mage-os-lab/mage-os-installer/releases/latest/download/mage-os-installer_$(curl -s https://api.github.com/repos/mage-os-lab/mage-os-installer/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | tr -d v)_darwin_amd64.tar.gz | tar -xz mage-os-install
-sudo mv mage-os-install /usr/local/bin/
+sudo curl -sL -o /usr/local/bin/mage-os-install https://github.com/mage-os-lab/mage-os-installer/releases/latest/download/mage-os-install_$(curl -s https://api.github.com/repos/mage-os-lab/mage-os-installer/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | tr -d v)_darwin_amd64
+sudo chmod +x /usr/local/bin/mage-os-install
 ```
 
 **Linux (x86_64)**
 ```sh
-curl -sL https://github.com/mage-os-lab/mage-os-installer/releases/latest/download/mage-os-installer_$(curl -s https://api.github.com/repos/mage-os-lab/mage-os-installer/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | tr -d v)_linux_amd64.tar.gz | tar -xz mage-os-install
-sudo mv mage-os-install /usr/local/bin/
+sudo curl -sL -o /usr/local/bin/mage-os-install https://github.com/mage-os-lab/mage-os-installer/releases/latest/download/mage-os-install_$(curl -s https://api.github.com/repos/mage-os-lab/mage-os-installer/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | tr -d v)_linux_amd64
+sudo chmod +x /usr/local/bin/mage-os-install
 ```
 
 **Linux (ARM64)**
 ```sh
-curl -sL https://github.com/mage-os-lab/mage-os-installer/releases/latest/download/mage-os-installer_$(curl -s https://api.github.com/repos/mage-os-lab/mage-os-installer/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | tr -d v)_linux_arm64.tar.gz | tar -xz mage-os-install
-sudo mv mage-os-install /usr/local/bin/
+sudo curl -sL -o /usr/local/bin/mage-os-install https://github.com/mage-os-lab/mage-os-installer/releases/latest/download/mage-os-install_$(curl -s https://api.github.com/repos/mage-os-lab/mage-os-installer/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | tr -d v)_linux_arm64
+sudo chmod +x /usr/local/bin/mage-os-install
 ```
 
 **Windows**
 
-Download `mage-os-installer_{version}_windows_amd64.zip` (or `windows_arm64.zip`) from the [releases page](https://github.com/mage-os-lab/mage-os-installer/releases/latest), extract it, and add the directory to your `PATH`.
+Download `mage-os-install_{version}_windows_amd64.exe` (or `windows_arm64.exe`) from the [releases page](https://github.com/mage-os-lab/mage-os-installer/releases/latest) and add the directory to your `PATH`.
 
 **Via Go**
 ```sh
