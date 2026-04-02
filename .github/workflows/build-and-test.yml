@@ -46,21 +46,31 @@ jobs:
 
     name: ddev-test (${{ matrix.name }})
 
-    # Skip Hyvä variants when secrets are not available
-    if: ${{ matrix.hyva == 'false' || vars.HYVA_REPO_URL != '' }}
-
     steps:
+      # Skip Hyvä variants when secrets are not available
+      - name: Check if this variant should run
+        id: should-run
+        run: |
+          if [[ "${{ matrix.hyva }}" == "true" && -z "${{ vars.HYVA_REPO_URL }}" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Skipping Hyvä variant because HYVA_REPO_URL is not configured"
+          fi
+
       - uses: actions/checkout@v4
+        if: steps.should-run.outputs.skip != 'true'
 
       - name: Set up Go
+        if: steps.should-run.outputs.skip != 'true'
         uses: actions/setup-go@v5
         with:
           go-version: '1.24'
 
       - name: Build binary
+        if: steps.should-run.outputs.skip != 'true'
         run: go build -o mage-os-install .
 
       - name: Create .ddev/config.yaml
+        if: steps.should-run.outputs.skip != 'true'
         run: |
           mkdir -p .ddev
           cat > .ddev/config.yaml << 'EOF'
@@ -70,11 +80,13 @@ jobs:
           EOF
 
       - name: Setup DDEV
+        if: steps.should-run.outputs.skip != 'true'
         uses: ddev/github-action-setup-ddev@v1
         with:
           autostart: false
 
       - name: Run Mage-OS installer
+        if: steps.should-run.outputs.skip != 'true'
         env:
           SAMPLE_DATA: ${{ matrix.sample_data }}
           HYVA: ${{ matrix.hyva }}
@@ -180,11 +192,13 @@ jobs:
           EXPECT_EOF
 
       - name: Run bin/magento to verify installation
+        if: steps.should-run.outputs.skip != 'true'
         run: |
           sleep 5
           ddev php bin/magento
 
       - name: Verify Mage-OS is running
+        if: steps.should-run.outputs.skip != 'true'
         run: |
           HTTP_CODE=$(curl -sSk -L -D /tmp/curl-headers.txt -o /tmp/curl-body.txt -w "%{http_code}" https://test-mageos.ddev.site/)
           echo "------- Response headers -------"
@@ -198,14 +212,14 @@ jobs:
           grep -qi "^x-dist:.*Mage-OS" /tmp/curl-headers.txt || { echo "Expected x-dist: Mage-OS header not found"; exit 1; }
 
       - name: Verify sample data (if enabled)
-        if: ${{ matrix.sample_data == 'true' }}
+        if: steps.should-run.outputs.skip != 'true' && matrix.sample_data == 'true'
         run: |
           PRODUCT_COUNT=$(ddev exec bin/magento catalog:product:count 2>/dev/null || ddev mysql -N -e "SELECT COUNT(*) FROM catalog_product_entity")
           echo "Product count: $PRODUCT_COUNT"
           [ "$PRODUCT_COUNT" -gt 0 ] || { echo "Expected products from sample data, found none"; exit 1; }
 
       - name: Verify Hyvä theme (if enabled)
-        if: ${{ matrix.hyva == 'true' }}
+        if: steps.should-run.outputs.skip != 'true' && matrix.hyva == 'true'
         run: |
           THEME=$(ddev mysql -N -e "SELECT value FROM core_config_data WHERE path='design/theme/theme_id'")
           THEME_PATH=$(ddev mysql -N -e "SELECT theme_path FROM theme WHERE theme_id=$THEME")
@@ -235,21 +249,31 @@ jobs:
 
     name: warden-test (${{ matrix.name }})
 
-    # Skip Hyvä variants when secrets are not available
-    if: ${{ matrix.hyva == 'false' || vars.HYVA_REPO_URL != '' }}
-
     steps:
+      # Skip Hyvä variants when secrets are not available
+      - name: Check if this variant should run
+        id: should-run
+        run: |
+          if [[ "${{ matrix.hyva }}" == "true" && -z "${{ vars.HYVA_REPO_URL }}" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Skipping Hyvä variant because HYVA_REPO_URL is not configured"
+          fi
+
       - uses: actions/checkout@v4
+        if: steps.should-run.outputs.skip != 'true'
 
       - name: Set up Go
+        if: steps.should-run.outputs.skip != 'true'
         uses: actions/setup-go@v5
         with:
           go-version: '1.24'
 
       - name: Build binary
+        if: steps.should-run.outputs.skip != 'true'
         run: go build -o mage-os-install .
 
       - name: Install Warden
+        if: steps.should-run.outputs.skip != 'true'
         run: |
           sudo mkdir -p /opt/warden
           sudo chown $(whoami) /opt/warden
@@ -257,16 +281,19 @@ jobs:
           echo "/opt/warden/bin" >> $GITHUB_PATH
 
       - name: Initialize Warden
+        if: steps.should-run.outputs.skip != 'true'
         run: |
           /opt/warden/bin/warden install
           /opt/warden/bin/warden svc up
 
       - name: Add /etc/hosts entries
+        if: steps.should-run.outputs.skip != 'true'
         run: |
           echo "127.0.0.1 app.test-mageos.test" | sudo tee -a /etc/hosts
           echo "127.0.0.1 test-mageos.test" | sudo tee -a /etc/hosts
 
       - name: Run Mage-OS installer
+        if: steps.should-run.outputs.skip != 'true'
         env:
           SAMPLE_DATA: ${{ matrix.sample_data }}
           HYVA: ${{ matrix.hyva }}
@@ -372,12 +399,14 @@ jobs:
           EXPECT_EOF
 
       - name: Run bin/magento to verify installation
+        if: steps.should-run.outputs.skip != 'true'
         run: |
           sleep 5
           cd test-mageos
           /opt/warden/bin/warden env exec php-fpm bin/magento --version
 
       - name: Verify Mage-OS is running
+        if: steps.should-run.outputs.skip != 'true'
         run: |
           HTTP_CODE=$(curl -sSk -L -D /tmp/curl-headers.txt -o /tmp/curl-body.txt -w "%{http_code}" https://app.test-mageos.test/)
           echo "------- Response headers -------"
@@ -391,7 +420,7 @@ jobs:
           grep -qi "^x-dist:.*Mage-OS" /tmp/curl-headers.txt || { echo "Expected x-dist: Mage-OS header not found"; exit 1; }
 
       - name: Verify sample data (if enabled)
-        if: ${{ matrix.sample_data == 'true' }}
+        if: steps.should-run.outputs.skip != 'true' && matrix.sample_data == 'true'
         run: |
           cd test-mageos
           PRODUCT_COUNT=$(/opt/warden/bin/warden env exec php-fpm bin/magento catalog:product:count 2>/dev/null || /opt/warden/bin/warden env exec php-fpm mysql -h db -u magento -pmagento magento -N -e "SELECT COUNT(*) FROM catalog_product_entity")
@@ -399,7 +428,7 @@ jobs:
           [ "$PRODUCT_COUNT" -gt 0 ] || { echo "Expected products from sample data, found none"; exit 1; }
 
       - name: Verify Hyvä theme (if enabled)
-        if: ${{ matrix.hyva == 'true' }}
+        if: steps.should-run.outputs.skip != 'true' && matrix.hyva == 'true'
         run: |
           cd test-mageos
           THEME=$(/opt/warden/bin/warden env exec php-fpm mysql -h db -u magento -pmagento magento -N -e "SELECT value FROM core_config_data WHERE path='design/theme/theme_id'" 2>/dev/null)
@@ -408,7 +437,7 @@ jobs:
           [ "$THEME_PATH" = "Hyva/default" ] || { echo "Expected Hyva/default theme, got $THEME_PATH"; exit 1; }
 
       - name: Debug on failure
-        if: failure()
+        if: failure() && steps.should-run.outputs.skip != 'true'
         run: |
           echo "------- Docker containers -------"
           docker ps -a
