@@ -46,6 +46,9 @@ type logMsg string
 // stepStartMsg is sent when an installation step begins.
 type stepStartMsg struct{ index int }
 
+// sudoCachedMsg is sent after sudo -v completes (caching credentials).
+type sudoCachedMsg struct{ err error }
+
 // stepDoneMsg is sent when an installation step completes successfully.
 type stepDoneMsg struct{ index int }
 
@@ -376,6 +379,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.advanceFromDetection()
 
+	case sudoCachedMsg:
+		// sudo credentials are now cached (or failed); proceed with install.
+		m.phase = phaseInstalling
+		ch, cmd := runInstall(m.selected.Detector, m.installCfg)
+		m.logCh = ch
+		return m, tea.Batch(m.spinner.Tick, cmd)
+
 	case logMsg:
 		m.logLines = append(m.logLines, string(msg))
 		return m, waitForLog(m.logCh)
@@ -601,10 +611,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			case "enter":
 				m.initInstallSteps()
-				m.phase = phaseInstalling
-				ch, cmd := runInstall(m.selected.Detector, m.installCfg)
-				m.logCh = ch
-				return m, tea.Batch(m.spinner.Tick, cmd)
+				// Cache sudo credentials before starting the install so that
+				// commands like "ddev start" (which modifies /etc/hosts) can
+				// use sudo without prompting inside the TUI.
+				c := exec.Command("sudo", "-v")
+				return m, tea.ExecProcess(c, func(err error) tea.Msg {
+					return sudoCachedMsg{err: err}
+				})
 			case "b", "esc":
 				m.phase = phaseSetupConfig
 				return m, textinput.Blink
