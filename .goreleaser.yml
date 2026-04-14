@@ -1,3 +1,5 @@
+version: 2
+
 builds:
   - main: .
     binary: mage-os-install
@@ -10,7 +12,8 @@ builds:
       - arm64
 
 archives:
-  - format: binary
+  - formats:
+      - binary
 
 checksum:
   name_template: 'checksums.txt'
