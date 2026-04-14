@@ -424,6 +424,20 @@ func runComposerCreateProject(config *Config, name string, args []string) error 
 		return nil
 	}
 
+	// The target directory is the last argument (e.g. /tmp/mage-os-project).
+	// Clean it up before retrying so composer doesn't fail with "directory not empty".
+	targetDir := args[len(args)-1]
+	// Build a cleanup command using the same exec prefix (everything before "composer").
+	var cleanupArgs []string
+	for _, a := range args {
+		if a == "composer" {
+			break
+		}
+		cleanupArgs = append(cleanupArgs, a)
+	}
+	cleanupArgs = append(cleanupArgs, "rm", "-rf", targetDir)
+	_ = runInDir(config.Directory, nil, name, cleanupArgs...)
+
 	// Insert --no-audit right after "create-project" in the args.
 	var retryArgs []string
 	for i, a := range args {
