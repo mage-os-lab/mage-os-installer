@@ -3,6 +3,8 @@ version: 2
 builds:
   - main: .
     binary: mage-os-install
+    ldflags:
+      - -s -w -X main.version={{ .Tag }}
     goos:
       - linux
       - darwin
