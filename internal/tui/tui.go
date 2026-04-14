@@ -618,7 +618,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.ExecProcess(c, func(err error) tea.Msg {
 					return sudoCachedMsg{err: err}
 				})
-			case "b", "esc":
+			case "b", "esc", "backspace":
 				m.phase = phaseSetupConfig
 				return m, textinput.Blink
 			}
@@ -810,7 +810,7 @@ func (m Model) View() string {
 			b.WriteString(line + "\n")
 		}
 		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("↑/↓ to scroll · Enter to run · b to go back"))
+		b.WriteString(dimStyle.Render("↑/↓ to scroll · Enter to run · Backspace to go back"))
 
 	case phaseInstalling:
 		b.WriteString(fmt.Sprintf("%s Installing %s...\n", m.spinner.View(), m.selected.Env.Name))

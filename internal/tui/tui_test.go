@@ -22,10 +22,14 @@ func (d *mockDetector) Steps() []detector.Step                 { return nil }
 func (d *mockDetector) PrepareSteps(_ *detector.Config)        {}
 func (d *mockDetector) Detect() (*detector.Environment, error) { return d.env, nil }
 func (d *mockDetector) Install(cfg *detector.Config) error     { return d.installErr }
-func (d *mockDetector) SetupInstallFlags(_ *detector.Config) []detector.SetupFlag {
-	return nil
+func (d *mockDetector) SetupInstallFlags(cfg *detector.Config) []detector.SetupFlag {
+	return []detector.SetupFlag{
+		{Flag: "--db-host", Value: "db", Editable: false},
+		{Flag: "--admin-user", Value: cfg.AdminUser, Editable: true},
+		{Flag: "--admin-password", Value: cfg.AdminPassword, Editable: true},
+	}
 }
-func (d *mockDetector) SetupCommandPrefix() string  { return "mock exec bin/magento setup:install" }
+func (d *mockDetector) SetupCommandPrefix() string { return "mock exec bin/magento setup:install" }
 func (d *mockDetector) BaseURL(projectName string) string {
 	return "https://" + projectName + ".test"
 }
@@ -486,6 +490,120 @@ func TestHyva_CredentialFieldsAppearsWhenEnabled(t *testing.T) {
 	}
 	if !contains(view, "Auth token") {
 		t.Error("'Auth token' field should appear when installHyva is true")
+	}
+}
+
+// --- setup:install command preview (US-006) ---
+
+// advanceToSetupPreview drives the model through name → dir → setup config → preview.
+func advanceToSetupPreview(t *testing.T) Model {
+	t.Helper()
+	m := advanceToSetupConfig(t)
+	// Navigate to the last field (Hyvä toggle) and press Enter to submit the form.
+	totalFields := len(m.setupInputs) + 2 // +2 for sample data + hyvä toggles
+	for i := 0; i < totalFields-1; i++ {
+		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
+	}
+	m = pressEnter(m) // submit form → phaseSetupPreview
+	if m.phase != phaseSetupPreview {
+		t.Fatalf("expected phaseSetupPreview, got %d", m.phase)
+	}
+	return m
+}
+
+// TestPreview_ShowsSetupInstallCommand verifies the preview screen renders the
+// bin/magento setup:install command prefix.
+func TestPreview_ShowsSetupInstallCommand(t *testing.T) {
+	m := advanceToSetupPreview(t)
+	view := m.View()
+	if !contains(view, "setup:install") {
+		t.Error("preview view should contain 'setup:install'")
+	}
+}
+
+// TestPreview_ShowsAllFlags verifies that all flags returned by SetupInstallFlags
+// appear in the preview view.
+func TestPreview_ShowsAllFlags(t *testing.T) {
+	m := advanceToSetupPreview(t)
+	view := m.View()
+	for _, flag := range m.selected.Detector.SetupInstallFlags(&m.installCfg) {
+		if !contains(view, flag.Flag) {
+			t.Errorf("preview view should contain flag %q", flag.Flag)
+		}
+	}
+}
+
+// TestPreview_EditableValuesAppear verifies that editable (user-supplied) values
+// appear in the preview view.
+func TestPreview_EditableValuesAppear(t *testing.T) {
+	m := advanceToSetupPreview(t)
+	view := m.View()
+	// The admin user default is "admin"; it should appear as an editable value.
+	if !contains(view, m.installCfg.AdminUser) {
+		t.Errorf("preview view should show editable admin user value %q", m.installCfg.AdminUser)
+	}
+}
+
+// TestPreview_ScrollsWithArrowKeys verifies that up/down arrow keys change previewScroll.
+func TestPreview_ScrollsWithArrowKeys(t *testing.T) {
+	m := advanceToSetupPreview(t)
+	// Set window height so there is room to scroll.
+	m.windowHeight = 5
+
+	initial := m.previewScroll
+
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyDown})
+	if m.previewScroll == initial {
+		// It's possible all lines fit in the window; just verify no panic occurred.
+		// Skip if the command has fewer lines than the window.
+		totalLines := 1 + len(m.selected.Detector.SetupInstallFlags(&m.installCfg))
+		maxVisible := m.windowHeight - 10
+		if maxVisible < 3 {
+			maxVisible = 3
+		}
+		if totalLines <= maxVisible {
+			t.Skip("not enough lines to scroll; skipping")
+		}
+		t.Errorf("down arrow should increase previewScroll (was %d, still %d)", initial, m.previewScroll)
+	}
+
+	// Scroll back up
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyUp})
+	if m.previewScroll != initial {
+		t.Errorf("up arrow should decrease previewScroll back to %d, got %d", initial, m.previewScroll)
+	}
+}
+
+// TestPreview_UpArrowDoesNotGoNegative verifies that previewScroll stays >= 0.
+func TestPreview_UpArrowDoesNotGoNegative(t *testing.T) {
+	m := advanceToSetupPreview(t)
+	m.previewScroll = 0
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyUp})
+	if m.previewScroll < 0 {
+		t.Errorf("previewScroll should not go negative, got %d", m.previewScroll)
+	}
+}
+
+// TestPreview_BackspaceGoesBackToSetupConfig verifies that pressing Backspace
+// returns to the admin credentials form.
+func TestPreview_BackspaceGoesBackToSetupConfig(t *testing.T) {
+	m := advanceToSetupPreview(t)
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	if m.phase != phaseSetupConfig {
+		t.Errorf("Backspace should return to phaseSetupConfig, got %d", m.phase)
+	}
+}
+
+// TestPreview_EnterThenSudoCachedAdvancesToInstall verifies that pressing Enter on
+// the preview screen and receiving the sudoCachedMsg transitions to phaseInstalling.
+func TestPreview_EnterThenSudoCachedAdvancesToInstall(t *testing.T) {
+	m := advanceToSetupPreview(t)
+	// Enter schedules sudo -v via tea.ExecProcess (a Cmd, not a phase change).
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyEnter})
+	// Simulate sudo completing successfully.
+	m = sendMsg(m, sudoCachedMsg{err: nil})
+	if m.phase != phaseInstalling {
+		t.Errorf("after Enter + sudoCachedMsg, expected phaseInstalling, got %d", m.phase)
 	}
 }
 
