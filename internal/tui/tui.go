@@ -185,7 +185,7 @@ var setupFieldDefs = []struct {
 	{label: "Admin lastname", echo: textinput.EchoNormal},
 }
 
-var setupFieldDefaults = []string{"admin", "", "", "Admin", "User"}
+var setupFieldDefaults = []string{"admin", "Admin123!", "admin@example.com", "Admin", "User"}
 
 // hyvaFieldDefs defines the Hyvä credential fields.
 var hyvaFieldDefs = []struct {

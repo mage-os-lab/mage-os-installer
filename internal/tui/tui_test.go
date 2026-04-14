@@ -261,6 +261,91 @@ func TestView_DetectingPhaseShowsSpinner(t *testing.T) {
 	}
 }
 
+// --- admin credentials form (US-003) ---
+
+// advanceToSetupConfig drives the model through name → dir → setup config using a mock env.
+func advanceToSetupConfig(t *testing.T) Model {
+	t.Helper()
+	m := pressEnter(New()) // name → dir
+	m = sendMsg(m, detectionDoneMsg{envs: []detector.DetectedEnvironment{makeDetectedEnv("DDEV")}})
+	m = pressEnter(m) // dir → setup config
+	if m.phase != phaseSetupConfig {
+		t.Fatalf("expected phaseSetupConfig, got %d", m.phase)
+	}
+	return m
+}
+
+// TestSetupConfig_HasAllFiveFields verifies the setup form view renders all five
+// required admin credential field labels.
+func TestSetupConfig_HasAllFiveFields(t *testing.T) {
+	m := advanceToSetupConfig(t)
+	view := m.View()
+	for _, want := range []string{"Admin user", "Admin password", "Admin email", "Admin firstname", "Admin lastname"} {
+		if !contains(view, want) {
+			t.Errorf("setup config view missing field label %q", want)
+		}
+	}
+}
+
+// TestSetupConfig_DefaultsPreFilled verifies that all five admin fields have
+// sensible (non-empty) default values after initSetupInputs.
+func TestSetupConfig_DefaultsPreFilled(t *testing.T) {
+	m := advanceToSetupConfig(t)
+	for i, f := range setupFieldDefs {
+		val := m.setupInputs[i].Value()
+		if val == "" {
+			t.Errorf("field %q should have a non-empty default, got empty string", f.label)
+		}
+	}
+}
+
+// TestSetupConfig_TabAdvancesField verifies Tab moves focus to the next field.
+func TestSetupConfig_TabAdvancesField(t *testing.T) {
+	m := advanceToSetupConfig(t)
+	// Start at field 0 (admin user)
+	if m.setupFocus != 0 {
+		t.Fatalf("expected setupFocus 0, got %d", m.setupFocus)
+	}
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
+	if m.inTogglePhase || m.setupFocus != 1 {
+		t.Errorf("Tab should move focus to field 1; inTogglePhase=%v setupFocus=%d", m.inTogglePhase, m.setupFocus)
+	}
+}
+
+// TestSetupConfig_ShiftTabGoesBack verifies Shift+Tab moves focus to the previous field.
+func TestSetupConfig_ShiftTabGoesBack(t *testing.T) {
+	m := advanceToSetupConfig(t)
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab}) // → field 1
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyShiftTab})
+	if m.inTogglePhase || m.setupFocus != 0 {
+		t.Errorf("Shift+Tab should move back to field 0; inTogglePhase=%v setupFocus=%d", m.inTogglePhase, m.setupFocus)
+	}
+}
+
+// TestSetupConfig_ValidationRejectsEmpty verifies that clearing a field and
+// pressing Enter on the last field triggers a validation error.
+func TestSetupConfig_ValidationRejectsEmpty(t *testing.T) {
+	m := advanceToSetupConfig(t)
+	// Clear the admin user field (index 0)
+	m.setupInputs[0].SetValue("")
+	// Navigate to the last admin field then to the last toggle and submit
+	// by pressing Enter on the last field in the form.
+	// Simulate being on the last hyva toggle (absPos == totalFields-1) with enter.
+	// Easier: set absPos to last and send enter directly via pressing tab many times.
+	totalFields := len(m.setupInputs) + 2 // +2 for toggles
+	for i := 0; i < totalFields-1; i++ {
+		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
+	}
+	// Now at the last field; press Enter → should trigger validation
+	m = pressEnter(m)
+	if m.setupError == "" {
+		t.Error("expected a setupError after submitting with an empty required field, got none")
+	}
+	if m.phase == phaseSetupPreview {
+		t.Error("should not advance to phaseSetupPreview when validation fails")
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
 		func() bool {
