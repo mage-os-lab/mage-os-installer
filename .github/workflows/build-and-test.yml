@@ -226,6 +226,20 @@ jobs:
           echo "Active theme: $THEME_PATH"
           [ "$THEME_PATH" = "Hyva/default" ] || { echo "Expected Hyva/default theme, got $THEME_PATH"; exit 1; }
 
+      - name: Debug on failure
+        if: failure() && steps.should-run.outputs.skip != 'true'
+        run: |
+          echo "------- Docker containers -------"
+          docker ps -a
+          echo "------- DDEV .env -------"
+          cat test-mageos/.ddev/.env 2>/dev/null || echo "No .ddev/.env found"
+          cat test-mageos/.env 2>/dev/null || echo "No .env found"
+          echo "------- Docker logs (last 50 lines per container) -------"
+          for c in $(docker ps -aq); do
+            echo "=== Container: $(docker inspect --format '{{.Name}}' $c) ==="
+            docker logs --tail 50 $c 2>&1 || true
+          done
+
   warden-test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
