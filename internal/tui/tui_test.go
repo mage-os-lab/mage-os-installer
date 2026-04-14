@@ -15,10 +15,11 @@ type mockDetector struct {
 	info       detector.DetectorInfo
 	env        *detector.Environment
 	installErr error
+	steps      []detector.Step
 }
 
 func (d *mockDetector) Info() detector.DetectorInfo            { return d.info }
-func (d *mockDetector) Steps() []detector.Step                 { return nil }
+func (d *mockDetector) Steps() []detector.Step                 { return d.steps }
 func (d *mockDetector) PrepareSteps(_ *detector.Config)        {}
 func (d *mockDetector) Detect() (*detector.Environment, error) { return d.env, nil }
 func (d *mockDetector) Install(cfg *detector.Config) error     { return d.installErr }
@@ -604,6 +605,229 @@ func TestPreview_EnterThenSudoCachedAdvancesToInstall(t *testing.T) {
 	m = sendMsg(m, sudoCachedMsg{err: nil})
 	if m.phase != phaseInstalling {
 		t.Errorf("after Enter + sudoCachedMsg, expected phaseInstalling, got %d", m.phase)
+	}
+}
+
+// --- multi-step installation with live logging (US-007) ---
+
+// makeDetectedEnvWithSteps creates a DetectedEnvironment with a mockDetector
+// that returns the given named steps.
+func makeDetectedEnvWithSteps(name string, steps []detector.Step) detector.DetectedEnvironment {
+	return detector.DetectedEnvironment{
+		Env: detector.Environment{Name: name, Version: "1.0.0"},
+		Detector: &mockDetector{
+			info:  detector.DetectorInfo{Name: name, InstallURL: "https://example.com"},
+			steps: steps,
+		},
+	}
+}
+
+// advanceToInstalling drives the model to phaseInstalling using a detector
+// with the given named steps.
+func advanceToInstalling(t *testing.T, steps []detector.Step) Model {
+	t.Helper()
+	m := pressEnter(New()) // name → dir
+	env := makeDetectedEnvWithSteps("DDEV", steps)
+	m = sendMsg(m, detectionDoneMsg{envs: []detector.DetectedEnvironment{env}})
+	m = pressEnter(m) // dir → setup config
+	if m.phase != phaseSetupConfig {
+		t.Fatalf("expected phaseSetupConfig, got %d", m.phase)
+	}
+	// Navigate to last field and submit form
+	totalFields := len(m.setupInputs) + 2 // +2 for sample data + hyvä toggles
+	for i := 0; i < totalFields-1; i++ {
+		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
+	}
+	m = pressEnter(m) // submit form → preview
+	if m.phase != phaseSetupPreview {
+		t.Fatalf("expected phaseSetupPreview, got %d", m.phase)
+	}
+	// Enter triggers initInstallSteps + sudo -v Cmd; sudo cached → phaseInstalling
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = sendMsg(m, sudoCachedMsg{err: nil})
+	if m.phase != phaseInstalling {
+		t.Fatalf("expected phaseInstalling, got %d", m.phase)
+	}
+	return m
+}
+
+// TestInstall_NamedStepsAppearInView verifies that installation steps loaded
+// from the detector appear by name in the installation view (AC1).
+func TestInstall_NamedStepsAppearInView(t *testing.T) {
+	steps := []detector.Step{
+		{Name: "Configure DDEV"},
+		{Name: "Install addons"},
+		{Name: "Run setup:install"},
+	}
+	m := advanceToInstalling(t, steps)
+	view := m.View()
+	for _, step := range steps {
+		if !contains(view, step.Name) {
+			t.Errorf("installing view should contain step name %q", step.Name)
+		}
+	}
+}
+
+// TestInstall_PendingStepShowsDot verifies pending steps show the '•' indicator (AC2).
+func TestInstall_PendingStepShowsDot(t *testing.T) {
+	m := New()
+	m.phase = phaseInstalling
+	env := makeDetectedEnv("DDEV")
+	m.selected = &env
+	m.installSteps = []installStep{{name: "Configure DDEV", status: stepPending}}
+	view := m.View()
+	if !contains(view, "•") {
+		t.Error("pending step should show '•' indicator")
+	}
+	if !contains(view, "Configure DDEV") {
+		t.Error("pending step name should appear in view")
+	}
+}
+
+// TestInstall_RunningStepShowsArrow verifies running steps show the '▸' indicator (AC2).
+func TestInstall_RunningStepShowsArrow(t *testing.T) {
+	m := New()
+	m.phase = phaseInstalling
+	env := makeDetectedEnv("DDEV")
+	m.selected = &env
+	m.installSteps = []installStep{{name: "Install addons", status: stepRunning}}
+	view := m.View()
+	if !contains(view, "▸") {
+		t.Error("running step should show '▸' indicator")
+	}
+	if !contains(view, "Install addons") {
+		t.Error("running step name should appear in view")
+	}
+}
+
+// TestInstall_DoneStepShowsCheckmark verifies done steps show the '✓' indicator (AC2).
+func TestInstall_DoneStepShowsCheckmark(t *testing.T) {
+	m := New()
+	m.phase = phaseInstalling
+	env := makeDetectedEnv("DDEV")
+	m.selected = &env
+	m.installSteps = []installStep{{name: "Configure DDEV", status: stepDone}}
+	view := m.View()
+	if !contains(view, "✓") {
+		t.Error("done step should show '✓' indicator")
+	}
+	if !contains(view, "Configure DDEV") {
+		t.Error("done step name should appear in view")
+	}
+}
+
+// TestInstall_FailedStepShowsCross verifies failed steps show the '✗' indicator (AC2).
+func TestInstall_FailedStepShowsCross(t *testing.T) {
+	m := New()
+	m.phase = phaseInstalling
+	env := makeDetectedEnv("DDEV")
+	m.selected = &env
+	m.installSteps = []installStep{{name: "Run setup:install", status: stepFailed}}
+	view := m.View()
+	if !contains(view, "✗") {
+		t.Error("failed step should show '✗' indicator")
+	}
+	if !contains(view, "Run setup:install") {
+		t.Error("failed step name should appear in view")
+	}
+}
+
+// TestInstall_LogBoxShowsStreamedOutput verifies that log lines from running
+// commands appear in the scrolling log box (AC3).
+func TestInstall_LogBoxShowsStreamedOutput(t *testing.T) {
+	m := New()
+	m.phase = phaseInstalling
+	env := makeDetectedEnv("DDEV")
+	m.selected = &env
+	m.logLines = []string{"Installing packages...", "Configuring database..."}
+	m.windowHeight = 40
+	m.windowWidth = 80
+	view := m.View()
+	if !contains(view, "Installing packages...") {
+		t.Error("log box should contain 'Installing packages...'")
+	}
+	if !contains(view, "Configuring database...") {
+		t.Error("log box should contain 'Configuring database...'")
+	}
+}
+
+// TestInstall_LogMsgAppendsToLogLines verifies that receiving a logMsg appends
+// output to the log (AC3).
+func TestInstall_LogMsgAppendsToLogLines(t *testing.T) {
+	m := New()
+	m.phase = phaseInstalling
+	m = sendMsg(m, logMsg("hello from installer"))
+	if len(m.logLines) == 0 {
+		t.Fatal("logMsg should append to logLines")
+	}
+	if m.logLines[0] != "hello from installer" {
+		t.Errorf("expected logLines[0]=%q, got %q", "hello from installer", m.logLines[0])
+	}
+}
+
+// TestInstall_AllStepsRemainVisible verifies that completed, running, and pending
+// steps are all rendered while installation is in progress (AC4).
+func TestInstall_AllStepsRemainVisible(t *testing.T) {
+	m := New()
+	m.phase = phaseInstalling
+	env := makeDetectedEnv("DDEV")
+	m.selected = &env
+	m.installSteps = []installStep{
+		{name: "Configure DDEV", status: stepDone},
+		{name: "Install addons", status: stepRunning},
+		{name: "Run setup:install", status: stepPending},
+	}
+	view := m.View()
+	for _, stepName := range []string{"Configure DDEV", "Install addons", "Run setup:install"} {
+		if !contains(view, stepName) {
+			t.Errorf("step %q should remain visible during installation", stepName)
+		}
+	}
+}
+
+// TestInstall_FailedStepRemainsVisibleWhileNextRuns verifies that a failed step
+// stays visible when a subsequent step begins running (AC4).
+func TestInstall_FailedStepRemainsVisibleWhileNextRuns(t *testing.T) {
+	m := New()
+	m.phase = phaseInstalling
+	env := makeDetectedEnv("DDEV")
+	m.selected = &env
+	m.installSteps = []installStep{
+		{name: "Configure DDEV", status: stepFailed},
+		{name: "Run setup:install", status: stepRunning},
+	}
+	view := m.View()
+	if !contains(view, "Configure DDEV") {
+		t.Error("failed step should remain visible while the next step runs")
+	}
+	if !contains(view, "Run setup:install") {
+		t.Error("running step should be visible")
+	}
+}
+
+// TestInstall_StepStartMsgSetsRunning verifies stepStartMsg transitions a step
+// from pending to running.
+func TestInstall_StepStartMsgSetsRunning(t *testing.T) {
+	m := New()
+	m.installSteps = []installStep{
+		{name: "Configure DDEV", status: stepPending},
+	}
+	m = sendMsg(m, stepStartMsg{index: 0})
+	if m.installSteps[0].status != stepRunning {
+		t.Errorf("stepStartMsg should set step to stepRunning, got %d", m.installSteps[0].status)
+	}
+}
+
+// TestInstall_StepDoneMsgSetsDone verifies stepDoneMsg transitions a step
+// from running to done.
+func TestInstall_StepDoneMsgSetsDone(t *testing.T) {
+	m := New()
+	m.installSteps = []installStep{
+		{name: "Configure DDEV", status: stepRunning},
+	}
+	m = sendMsg(m, stepDoneMsg{index: 0})
+	if m.installSteps[0].status != stepDone {
+		t.Errorf("stepDoneMsg should set step to stepDone, got %d", m.installSteps[0].status)
 	}
 }
 
