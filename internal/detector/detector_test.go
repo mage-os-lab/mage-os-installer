@@ -526,6 +526,62 @@ func TestWardenBuildSteps_SampleDataStep(t *testing.T) {
 	}
 }
 
+// --- US-005: Hyvä theme ---
+
+// TestDdevBuildSteps_HyvaSteps verifies that the Hyvä installation steps are
+// added to the DDEV step list only when InstallHyva is true (AC3).
+func TestDdevBuildSteps_HyvaSteps(t *testing.T) {
+	hasHyvaStep := func(d *DdevDetector) bool {
+		for _, s := range d.steps {
+			if strings.Contains(strings.ToLower(s.Name), "hyv") {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Without Hyvä: steps should NOT be present
+	d := &DdevDetector{}
+	d.buildSteps(&Config{InstallHyva: false})
+	if hasHyvaStep(d) {
+		t.Error("DDEV: expected no Hyvä steps when InstallHyva=false")
+	}
+
+	// With Hyvä: steps SHOULD be present
+	d = &DdevDetector{}
+	d.buildSteps(&Config{InstallHyva: true})
+	if !hasHyvaStep(d) {
+		t.Error("DDEV: expected Hyvä steps when InstallHyva=true")
+	}
+}
+
+// TestWardenBuildSteps_HyvaSteps verifies that the Hyvä installation steps are
+// added to the Warden step list only when InstallHyva is true (AC3).
+func TestWardenBuildSteps_HyvaSteps(t *testing.T) {
+	hasHyvaStep := func(d *WardenDetector) bool {
+		for _, s := range d.steps {
+			if strings.Contains(strings.ToLower(s.Name), "hyv") {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Without Hyvä: steps should NOT be present
+	w := &WardenDetector{}
+	w.buildSteps(&Config{InstallHyva: false})
+	if hasHyvaStep(w) {
+		t.Error("Warden: expected no Hyvä steps when InstallHyva=false")
+	}
+
+	// With Hyvä: steps SHOULD be present
+	w = &WardenDetector{}
+	w.buildSteps(&Config{InstallHyva: true})
+	if !hasHyvaStep(w) {
+		t.Error("Warden: expected Hyvä steps when InstallHyva=true")
+	}
+}
+
 // assertFlags checks that all wantFlags are present in the flags slice.
 func assertFlags(t *testing.T, flags []SetupFlag, wantFlags map[string]string, context string) {
 	t.Helper()

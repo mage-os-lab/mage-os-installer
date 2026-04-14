@@ -402,6 +402,93 @@ func TestSampleData_ViewShowsChecked(t *testing.T) {
 	}
 }
 
+// --- Hyvä theme toggle (US-005) ---
+
+// navigateToHyvaToggle tabs through all admin fields and the sample data toggle
+// to land on the Hyvä toggle.
+func navigateToHyvaToggle(m Model) Model {
+	// len(setupFieldDefs) tabs → sample data toggle; one more → Hyvä toggle
+	for i := 0; i < len(setupFieldDefs)+1; i++ {
+		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
+	}
+	return m
+}
+
+// TestHyva_DefaultIsOff verifies that the Hyvä toggle is off by default.
+func TestHyva_DefaultIsOff(t *testing.T) {
+	m := advanceToSetupConfig(t)
+	if m.installHyva {
+		t.Error("installHyva should be false by default")
+	}
+}
+
+// TestHyva_ToggledBySpace verifies that pressing space on the Hyvä toggle
+// enables it, and pressing space again disables it.
+func TestHyva_ToggledBySpace(t *testing.T) {
+	m := advanceToSetupConfig(t)
+	m = navigateToHyvaToggle(m)
+
+	if !m.inTogglePhase || m.toggleFocus != -1 {
+		t.Fatalf("expected focus on Hyvä toggle; inTogglePhase=%v toggleFocus=%d", m.inTogglePhase, m.toggleFocus)
+	}
+
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	if !m.installHyva {
+		t.Error("space should enable installHyva")
+	}
+
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	if m.installHyva {
+		t.Error("second space should disable installHyva")
+	}
+}
+
+// TestHyva_ViewContainsToggle verifies the setup form renders the Hyvä toggle.
+func TestHyva_ViewContainsToggle(t *testing.T) {
+	m := advanceToSetupConfig(t)
+	view := m.View()
+	if !contains(view, "Install Hyv") {
+		t.Error("setup config view should contain 'Install Hyvä' toggle label")
+	}
+}
+
+// TestHyva_ViewShowsChecked verifies the toggle renders as [x] when Hyvä is enabled.
+func TestHyva_ViewShowsChecked(t *testing.T) {
+	m := advanceToSetupConfig(t)
+	m.installHyva = true
+	view := m.View()
+	if !contains(view, "[x]") {
+		t.Error("view should show [x] when installHyva is true")
+	}
+}
+
+// TestHyva_CredentialFieldsHiddenByDefault verifies that Hyvä repo/token fields
+// are not shown when the toggle is off (AC2).
+func TestHyva_CredentialFieldsHiddenByDefault(t *testing.T) {
+	m := advanceToSetupConfig(t)
+	view := m.View()
+	if contains(view, "Repo URL") {
+		t.Error("'Repo URL' field should not appear when installHyva is false")
+	}
+	if contains(view, "Auth token") {
+		t.Error("'Auth token' field should not appear when installHyva is false")
+	}
+}
+
+// TestHyva_CredentialFieldsAppearsWhenEnabled verifies that enabling the toggle
+// shows the Hyvä repo URL and auth token fields (AC2).
+func TestHyva_CredentialFieldsAppearsWhenEnabled(t *testing.T) {
+	m := advanceToSetupConfig(t)
+	m.installHyva = true
+	view := m.View()
+	if !contains(view, "Repo URL") {
+		t.Error("'Repo URL' field should appear when installHyva is true")
+	}
+	if !contains(view, "Auth token") {
+		t.Error("'Auth token' field should appear when installHyva is true")
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
 		func() bool {
