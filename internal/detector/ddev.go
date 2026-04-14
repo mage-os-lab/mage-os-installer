@@ -2,12 +2,15 @@ package detector
 
 import (
 	"bufio"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // DdevDetector checks for the DDEV development environment.
@@ -58,6 +61,7 @@ func (d *DdevDetector) buildSteps(config *Config) {
 			Step{Name: "Enable Hyvä modules"},
 		)
 	}
+	d.steps = append(d.steps, Step{Name: "Verify installation"})
 }
 
 func (d *DdevDetector) SetupCommandPrefix() string {
@@ -279,6 +283,50 @@ func (d *DdevDetector) Install(config *Config) error {
 		}
 	}
 
+	// verifyInstallation is always the last step regardless of optional steps.
+	verifyIdx := len(d.steps) - 1
+	if verifyIdx >= config.StartFromStep {
+		stepStart(config, verifyIdx)
+		baseURL := d.BaseURL(config.ProjectName)
+		logf(config, "▸ Verifying store at %s", baseURL)
+		if err := verifyInstallation(baseURL, config.Log); err != nil {
+			return fmt.Errorf("installation verification failed: %w", err)
+		}
+		stepDone(config, verifyIdx)
+	}
+
+	return nil
+}
+
+// verifyInstallation makes an HTTP GET request to baseURL and checks that the
+// response returns HTTP 200 and includes the "x-dist: Mage-OS" header.
+// DDEV uses self-signed TLS certificates, so TLS verification is skipped.
+func verifyInstallation(baseURL string, logFn func(string)) error {
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+		},
+	}
+
+	resp, err := client.Get(baseURL) //nolint:noctx
+	if err != nil {
+		return fmt.Errorf("HTTP request to %s failed: %w", baseURL, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("expected HTTP 200 from %s, got %d", baseURL, resp.StatusCode)
+	}
+
+	dist := resp.Header.Get("x-dist")
+	if !strings.Contains(dist, "Mage-OS") {
+		return fmt.Errorf("expected x-dist header to contain 'Mage-OS', got %q", dist)
+	}
+
+	if logFn != nil {
+		logFn(fmt.Sprintf("▸ Verified: %s → HTTP 200, x-dist: %s", baseURL, dist))
+	}
 	return nil
 }
 
