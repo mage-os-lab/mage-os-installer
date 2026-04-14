@@ -964,6 +964,104 @@ func TestResume_QExitsInstaller(t *testing.T) {
 	}
 }
 
+// --- open browser phase (US-009) ---
+
+// advanceToOpenBrowser drives the model to phaseOpenBrowser (successful install).
+func advanceToOpenBrowser(t *testing.T) Model {
+	t.Helper()
+	m := pressEnter(New()) // name → dir
+	env := makeDetectedEnv("DDEV")
+	m = sendMsg(m, detectionDoneMsg{envs: []detector.DetectedEnvironment{env}})
+	m = pressEnter(m) // dir → setup config
+	if m.phase != phaseSetupConfig {
+		t.Fatalf("expected phaseSetupConfig, got %d", m.phase)
+	}
+	// Set a recognisable project name so we can assert on the URL.
+	m.nameInput.SetValue("myproject")
+	m.installCfg.ProjectName = "myproject"
+	m.phase = phaseOpenBrowser
+	m.selected = &env
+	m.browserOpened = false
+	return m
+}
+
+// TestOpenBrowser_ViewContainsPrompt verifies that the open-browser phase shows
+// a prompt asking the user to open the store URL (AC1).
+func TestOpenBrowser_ViewContainsPrompt(t *testing.T) {
+	m := advanceToOpenBrowser(t)
+	view := m.View()
+	if !contains(view, "in your browser") {
+		t.Error("open-browser view should contain 'in your browser' prompt")
+	}
+}
+
+// TestOpenBrowser_ViewContainsStoreURL verifies that the URL shown in the prompt
+// matches the configured base URL for the selected environment (AC4).
+func TestOpenBrowser_ViewContainsStoreURL(t *testing.T) {
+	m := advanceToOpenBrowser(t)
+	expectedURL := m.selected.Detector.BaseURL(m.installCfg.ProjectName)
+	view := m.View()
+	if !contains(view, expectedURL) {
+		t.Errorf("open-browser view should contain URL %q, got view:\n%s", expectedURL, view)
+	}
+}
+
+// TestOpenBrowser_YOpensURLAndAdvancesToDone verifies that pressing y sets
+// browserOpened and transitions to phaseInstallDone (AC2).
+func TestOpenBrowser_YOpensURLAndAdvancesToDone(t *testing.T) {
+	m := advanceToOpenBrowser(t)
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	if !m.browserOpened {
+		t.Error("pressing y should set browserOpened = true")
+	}
+	if m.phase != phaseInstallDone {
+		t.Errorf("pressing y should advance to phaseInstallDone, got %d", m.phase)
+	}
+}
+
+// TestOpenBrowser_NSkipsBrowserAndAdvancesToDone verifies that pressing n does
+// NOT open the browser and transitions to phaseInstallDone (AC3).
+func TestOpenBrowser_NSkipsBrowserAndAdvancesToDone(t *testing.T) {
+	m := advanceToOpenBrowser(t)
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	if m.browserOpened {
+		t.Error("pressing n should NOT open the browser")
+	}
+	if m.phase != phaseInstallDone {
+		t.Errorf("pressing n should advance to phaseInstallDone, got %d", m.phase)
+	}
+}
+
+// TestOpenBrowser_QExitsWithoutOpeningBrowser verifies that pressing q exits the
+// installer without opening the browser (AC3).
+func TestOpenBrowser_QExitsWithoutOpeningBrowser(t *testing.T) {
+	m := advanceToOpenBrowser(t)
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	if cmd == nil {
+		t.Fatal("pressing q should return a Cmd (tea.Quit)")
+	}
+	if msg := cmd(); msg == nil {
+		t.Error("the returned Cmd should produce a message (tea.QuitMsg)")
+	}
+	// browserOpened must remain false since we quit without opening the URL.
+	if m.browserOpened {
+		t.Error("pressing q should NOT open the browser before quitting")
+	}
+}
+
+// TestOpenBrowser_DoneViewShowsOpenedURL verifies that after y is pressed, the
+// install-done screen mentions the opened URL (AC2 follow-up).
+func TestOpenBrowser_DoneViewShowsOpenedURL(t *testing.T) {
+	m := advanceToOpenBrowser(t)
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	// Now in phaseInstallDone; the done view should mention the URL that was opened.
+	expectedURL := m.selected.Detector.BaseURL(m.installCfg.ProjectName)
+	view := m.View()
+	if !contains(view, expectedURL) {
+		t.Errorf("install-done view should show opened URL %q", expectedURL)
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
 		func() bool {
