@@ -115,27 +115,22 @@ jobs:
           puts ">>> Accepting install directory..."
           send "\r"
 
-          # Setup config form - admin user is focused first (default: admin)
+          # Setup config form - all fields have defaults, just press Enter through them
           expect "Configure"
           puts ">>> Filling in admin credentials..."
+          # Admin user (default: admin)
           send "\r"
-
-          # Admin password (empty by default)
-          sleep 0.5
-          send "Admin123!"
+          sleep 0.3
+          # Admin password (default: Admin123!)
           send "\r"
-
-          # Admin email (empty by default)
-          sleep 0.5
-          send "admin@example.com"
+          sleep 0.3
+          # Admin email (default: admin@example.com)
           send "\r"
-
+          sleep 0.3
           # Admin firstname (default: Admin)
-          sleep 0.5
           send "\r"
-
-          # Admin lastname (default: User) - moves to sample data toggle
-          sleep 0.5
+          sleep 0.3
+          # Admin lastname (default: User)
           send "\r"
 
           # Sample data toggle
@@ -336,27 +331,22 @@ jobs:
           puts ">>> Accepting install directory..."
           send "\r"
 
-          # Setup config form - admin user is focused first (default: admin)
+          # Setup config form - all fields have defaults, just press Enter through them
           expect "Configure"
           puts ">>> Filling in admin credentials..."
+          # Admin user (default: admin)
           send "\r"
-
-          # Admin password (empty by default)
-          sleep 0.5
-          send "Admin123!"
+          sleep 0.3
+          # Admin password (default: Admin123!)
           send "\r"
-
-          # Admin email (empty by default)
-          sleep 0.5
-          send "admin@example.com"
+          sleep 0.3
+          # Admin email (default: admin@example.com)
           send "\r"
-
+          sleep 0.3
           # Admin firstname (default: Admin)
-          sleep 0.5
           send "\r"
-
-          # Admin lastname (default: User) - moves to sample data toggle
-          sleep 0.5
+          sleep 0.3
+          # Admin lastname (default: User)
           send "\r"
 
           # Sample data toggle

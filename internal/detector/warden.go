@@ -145,13 +145,14 @@ func (d *WardenDetector) Install(config *Config) error {
 			); err != nil {
 				return err
 			}
-			if err := run(
-				"warden", "env", "exec", "php-fpm",
+			composerArgs := []string{
+				"env", "exec", "php-fpm",
 				"composer", "create-project",
 				"--repository-url=https://repo.mage-os.org/",
 				"mage-os/project-community-edition",
 				"/tmp/mage-os-project",
-			); err != nil {
+			}
+			if err := runComposerCreateProject(config, "warden", composerArgs); err != nil {
 				return err
 			}
 			return run(

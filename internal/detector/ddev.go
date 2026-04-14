@@ -122,6 +122,8 @@ func (d *DdevDetector) SetupInstallFlags(config *Config) []SetupFlag {
 func (d *DdevDetector) Install(config *Config) error {
 	d.buildSteps(config)
 
+	composerCreateProjectIdx := 7
+
 	steps := [][]string{
 		{
 			"ddev", "config",
@@ -137,6 +139,7 @@ func (d *DdevDetector) Install(config *Config) error {
 		{"ddev", "add-on", "get", "b13/ddev-rabbitmq"},
 		{"ddev", "start"},
 		{"ddev", "rabbitmq", "apply"},
+		// 7: composer create-project — handled via runComposerCreateProject
 		{
 			"ddev", "exec", "composer", "create-project",
 			"--repository-url=https://repo.mage-os.org/",
@@ -155,8 +158,14 @@ func (d *DdevDetector) Install(config *Config) error {
 			continue
 		}
 		stepStart(config, i)
-		logf(config, "▸ %s", strings.Join(args, " "))
-		if err := runInDir(config.Directory, config.Log, args[0], args[1:]...); err != nil {
+		var err error
+		if i == composerCreateProjectIdx {
+			err = runComposerCreateProject(config, args[0], args[1:])
+		} else {
+			logf(config, "▸ %s", strings.Join(args, " "))
+			err = runInDir(config.Directory, config.Log, args[0], args[1:]...)
+		}
+		if err != nil {
 			return fmt.Errorf("step %q failed: %w", strings.Join(args, " "), err)
 		}
 		stepDone(config, i)
@@ -402,6 +411,37 @@ func runInDir(dir string, logFn func(string), name string, args ...string) error
 	pr.Close()
 
 	return err
+}
+
+// runComposerCreateProject runs a composer create-project command. If it fails,
+// the command is retried with --no-audit in case the failure was caused by
+// Composer's security advisory blocking (Composer 2.7+). If the retry also
+// fails, the original error is returned.
+func runComposerCreateProject(config *Config, name string, args []string) error {
+	logf(config, "▸ %s %s", name, strings.Join(args, " "))
+	err := runInDir(config.Directory, config.Log, name, args...)
+	if err == nil {
+		return nil
+	}
+
+	// Insert --no-audit right after "create-project" in the args.
+	var retryArgs []string
+	for i, a := range args {
+		retryArgs = append(retryArgs, a)
+		if a == "create-project" {
+			retryArgs = append(retryArgs, "--no-audit")
+			retryArgs = append(retryArgs, args[i+1:]...)
+			break
+		}
+	}
+
+	logf(config, "⚠ Retrying with --no-audit in case a security advisory is blocking installation")
+	logf(config, "▸ %s %s", name, strings.Join(retryArgs, " "))
+	if retryErr := runInDir(config.Directory, config.Log, name, retryArgs...); retryErr != nil {
+		// Retry also failed; return the original error since it's more informative.
+		return err
+	}
+	return nil
 }
 
 // copyAuthJSON copies ~/.composer/auth.json into the running DDEV web container.
