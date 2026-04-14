@@ -831,6 +831,139 @@ func TestInstall_StepDoneMsgSetsDone(t *testing.T) {
 	}
 }
 
+// --- resume from failed step (US-008) ---
+
+// TestResume_FailureShowsLast10LogLines verifies that on failure, the error screen
+// shows the last 10 log lines (AC1).
+func TestResume_FailureShowsLast10LogLines(t *testing.T) {
+	m := New()
+	m.phase = phaseInstallDone
+	m.installErr = fmt.Errorf("step failed")
+	// Add 15 log lines; only the last 10 should be shown.
+	for i := 0; i < 15; i++ {
+		m.logLines = append(m.logLines, fmt.Sprintf("log-line-%02d", i))
+	}
+	view := m.View()
+	if !contains(view, "Last output:") {
+		t.Error("error screen should contain 'Last output:' header")
+	}
+	// Line 05 is the 10th from the end (index 5 of 15); should appear.
+	if !contains(view, "log-line-05") {
+		t.Error("error screen should show log-line-05 (10th from end)")
+	}
+	// Line 14 is the last; should appear.
+	if !contains(view, "log-line-14") {
+		t.Error("error screen should show log-line-14 (last line)")
+	}
+	// Line 04 is beyond the 10-line window; should NOT appear.
+	if contains(view, "log-line-04") {
+		t.Error("error screen should NOT show log-line-04 (beyond last 10 lines)")
+	}
+}
+
+// TestResume_RetryTransitionsToInstalling verifies that pressing r on the error
+// screen retries the installation and transitions to phaseInstalling (AC2).
+func TestResume_RetryTransitionsToInstalling(t *testing.T) {
+	m := New()
+	m.phase = phaseInstallDone
+	m.installErr = fmt.Errorf("step 1 failed")
+	env := makeDetectedEnvWithSteps("DDEV", []detector.Step{
+		{Name: "Step 0"},
+		{Name: "Step 1"},
+		{Name: "Step 2"},
+	})
+	m.selected = &env
+	m.installCfg = detector.Config{Directory: t.TempDir()}
+	m.installSteps = []installStep{
+		{name: "Step 0", status: stepDone},
+		{name: "Step 1", status: stepFailed},
+		{name: "Step 2", status: stepPending},
+	}
+
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	if m.phase != phaseInstalling {
+		t.Errorf("pressing r should transition to phaseInstalling, got %d", m.phase)
+	}
+	if m.installCfg.StartFromStep != 1 {
+		t.Errorf("StartFromStep should be 1 (index of failed step), got %d", m.installCfg.StartFromStep)
+	}
+}
+
+// TestResume_CompletedStepsSkippedOnRetry verifies that already-completed steps
+// remain in the done state and StartFromStep is set to the failed step index (AC3).
+func TestResume_CompletedStepsSkippedOnRetry(t *testing.T) {
+	m := New()
+	m.phase = phaseInstallDone
+	m.installErr = fmt.Errorf("step 2 failed")
+	env := makeDetectedEnvWithSteps("DDEV", []detector.Step{
+		{Name: "Step 0"},
+		{Name: "Step 1"},
+		{Name: "Step 2"},
+		{Name: "Step 3"},
+	})
+	m.selected = &env
+	m.installCfg = detector.Config{Directory: t.TempDir()}
+	m.installSteps = []installStep{
+		{name: "Step 0", status: stepDone},
+		{name: "Step 1", status: stepDone},
+		{name: "Step 2", status: stepFailed},
+		{name: "Step 3", status: stepPending},
+	}
+
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	// Completed steps should remain done.
+	if m.installSteps[0].status != stepDone {
+		t.Errorf("completed step 0 should stay stepDone on retry, got %d", m.installSteps[0].status)
+	}
+	if m.installSteps[1].status != stepDone {
+		t.Errorf("completed step 1 should stay stepDone on retry, got %d", m.installSteps[1].status)
+	}
+	// Failed step should be reset to pending.
+	if m.installSteps[2].status != stepPending {
+		t.Errorf("failed step 2 should be reset to stepPending on retry, got %d", m.installSteps[2].status)
+	}
+	// Pending step should remain pending.
+	if m.installSteps[3].status != stepPending {
+		t.Errorf("pending step 3 should remain stepPending on retry, got %d", m.installSteps[3].status)
+	}
+	// StartFromStep must equal the failed step's index so Install() skips done steps.
+	if m.installCfg.StartFromStep != 2 {
+		t.Errorf("StartFromStep should be 2, got %d", m.installCfg.StartFromStep)
+	}
+}
+
+// TestResume_EnterExitsInstaller verifies that pressing Enter on the failure
+// screen quits the installer (AC4).
+func TestResume_EnterExitsInstaller(t *testing.T) {
+	m := New()
+	m.phase = phaseInstallDone
+	m.installErr = fmt.Errorf("failed")
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("pressing Enter on failure screen should return a Cmd (tea.Quit)")
+	}
+	if msg := cmd(); msg == nil {
+		t.Error("the returned Cmd should produce a message (tea.QuitMsg)")
+	}
+}
+
+// TestResume_QExitsInstaller verifies that pressing q on the failure screen
+// quits the installer (AC4).
+func TestResume_QExitsInstaller(t *testing.T) {
+	m := New()
+	m.phase = phaseInstallDone
+	m.installErr = fmt.Errorf("failed")
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	if cmd == nil {
+		t.Fatal("pressing q on failure screen should return a Cmd (tea.Quit)")
+	}
+	if msg := cmd(); msg == nil {
+		t.Error("the returned Cmd should produce a message (tea.QuitMsg)")
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
 		func() bool {
