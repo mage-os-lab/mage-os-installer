@@ -414,9 +414,8 @@ func runInDir(dir string, logFn func(string), name string, args ...string) error
 }
 
 // runComposerCreateProject runs a composer create-project command. If it fails,
-// the command is retried with --no-audit in case the failure was caused by
-// Composer's security advisory blocking (Composer 2.7+). If the retry also
-// fails, the original error is returned.
+// it disables Composer's security advisory blocking (Composer 2.7+) and retries.
+// If the retry also fails, the original error is returned.
 func runComposerCreateProject(config *Config, name string, args []string) error {
 	logf(config, "▸ %s %s", name, strings.Join(args, " "))
 	err := runInDir(config.Directory, config.Log, name, args...)
@@ -424,34 +423,30 @@ func runComposerCreateProject(config *Config, name string, args []string) error 
 		return nil
 	}
 
-	// The target directory is the last argument (e.g. /tmp/mage-os-project).
-	// Clean it up before retrying so composer doesn't fail with "directory not empty".
-	targetDir := args[len(args)-1]
-	// Build a cleanup command using the same exec prefix (everything before "composer").
-	var cleanupArgs []string
+	// Build the exec prefix (everything before "composer") for helper commands.
+	var execPrefix []string
 	for _, a := range args {
 		if a == "composer" {
 			break
 		}
-		cleanupArgs = append(cleanupArgs, a)
+		execPrefix = append(execPrefix, a)
 	}
-	cleanupArgs = append(cleanupArgs, "rm", "-rf", targetDir)
+
+	// The target directory is the last argument (e.g. /tmp/mage-os-project).
+	// Clean it up before retrying so composer doesn't fail with "directory not empty".
+	targetDir := args[len(args)-1]
+	cleanupArgs := append(append([]string{}, execPrefix...), "rm", "-rf", targetDir)
 	_ = runInDir(config.Directory, nil, name, cleanupArgs...)
 
-	// Insert --no-audit right after "create-project" in the args.
-	var retryArgs []string
-	for i, a := range args {
-		retryArgs = append(retryArgs, a)
-		if a == "create-project" {
-			retryArgs = append(retryArgs, "--no-audit")
-			retryArgs = append(retryArgs, args[i+1:]...)
-			break
-		}
-	}
+	// Disable Composer's audit.block-insecure so security advisories don't
+	// prevent dependency resolution. --no-audit only skips post-install audit;
+	// this config setting is needed to unblock resolution itself.
+	disableArgs := append(append([]string{}, execPrefix...), "composer", "config", "--global", "audit.block-insecure", "false")
+	logf(config, "⚠ A security advisory may be blocking installation, disabling audit.block-insecure")
+	_ = runInDir(config.Directory, nil, name, disableArgs...)
 
-	logf(config, "⚠ Retrying with --no-audit in case a security advisory is blocking installation")
-	logf(config, "▸ %s %s", name, strings.Join(retryArgs, " "))
-	if retryErr := runInDir(config.Directory, config.Log, name, retryArgs...); retryErr != nil {
+	logf(config, "▸ %s %s", name, strings.Join(args, " "))
+	if retryErr := runInDir(config.Directory, config.Log, name, args...); retryErr != nil {
 		// Retry also failed; return the original error since it's more informative.
 		return err
 	}
