@@ -470,6 +470,62 @@ func TestWardenSetupInstallFlags_OpenSearchConfig(t *testing.T) {
 	assertFlags(t, flags, wantFlags, "Warden OpenSearch")
 }
 
+// --- US-004: Sample data ---
+
+// TestDdevBuildSteps_SampleDataStep verifies that the "Install sample data" step is
+// added to the DDEV step list only when InstallSampleData is true.
+func TestDdevBuildSteps_SampleDataStep(t *testing.T) {
+	hasSampleDataStep := func(d *DdevDetector) bool {
+		for _, s := range d.steps {
+			if strings.Contains(strings.ToLower(s.Name), "sample") {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Without sample data: step should NOT be present
+	d := &DdevDetector{}
+	d.buildSteps(&Config{InstallSampleData: false})
+	if hasSampleDataStep(d) {
+		t.Error("DDEV: expected no sample data step when InstallSampleData=false")
+	}
+
+	// With sample data: step SHOULD be present
+	d = &DdevDetector{}
+	d.buildSteps(&Config{InstallSampleData: true})
+	if !hasSampleDataStep(d) {
+		t.Error("DDEV: expected a sample data step when InstallSampleData=true")
+	}
+}
+
+// TestWardenBuildSteps_SampleDataStep verifies that the "Install sample data" step is
+// added to the Warden step list only when InstallSampleData is true.
+func TestWardenBuildSteps_SampleDataStep(t *testing.T) {
+	hasSampleDataStep := func(d *WardenDetector) bool {
+		for _, s := range d.steps {
+			if strings.Contains(strings.ToLower(s.Name), "sample") {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Without sample data: step should NOT be present
+	w := &WardenDetector{}
+	w.buildSteps(&Config{InstallSampleData: false})
+	if hasSampleDataStep(w) {
+		t.Error("Warden: expected no sample data step when InstallSampleData=false")
+	}
+
+	// With sample data: step SHOULD be present
+	w = &WardenDetector{}
+	w.buildSteps(&Config{InstallSampleData: true})
+	if !hasSampleDataStep(w) {
+		t.Error("Warden: expected a sample data step when InstallSampleData=true")
+	}
+}
+
 // assertFlags checks that all wantFlags are present in the flags slice.
 func assertFlags(t *testing.T, flags []SetupFlag, wantFlags map[string]string, context string) {
 	t.Helper()

@@ -346,6 +346,62 @@ func TestSetupConfig_ValidationRejectsEmpty(t *testing.T) {
 	}
 }
 
+// --- sample data toggle (US-004) ---
+
+// TestSampleData_DefaultIsOff verifies that the sample data toggle is off by default.
+func TestSampleData_DefaultIsOff(t *testing.T) {
+	m := advanceToSetupConfig(t)
+	if m.installSampleData {
+		t.Error("installSampleData should be false by default")
+	}
+}
+
+// TestSampleData_ToggledBySpace verifies that pressing space on the sample data
+// toggle switches it on, and pressing space again switches it off.
+func TestSampleData_ToggledBySpace(t *testing.T) {
+	m := advanceToSetupConfig(t)
+
+	// Tab through all admin fields to reach the sample data toggle
+	for i := 0; i < len(setupFieldDefs); i++ {
+		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
+	}
+	// Now at sample data toggle (absPos == len(setupInputs))
+	if !m.inTogglePhase || m.toggleFocus != -2 {
+		t.Fatalf("expected focus on sample data toggle; inTogglePhase=%v toggleFocus=%d", m.inTogglePhase, m.toggleFocus)
+	}
+
+	// Press space: should enable sample data
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	if !m.installSampleData {
+		t.Error("space should enable installSampleData")
+	}
+
+	// Press space again: should disable sample data
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	if m.installSampleData {
+		t.Error("second space should disable installSampleData")
+	}
+}
+
+// TestSampleData_ViewContainsToggle verifies the setup form renders the sample data toggle.
+func TestSampleData_ViewContainsToggle(t *testing.T) {
+	m := advanceToSetupConfig(t)
+	view := m.View()
+	if !contains(view, "Install sample data") {
+		t.Error("setup config view should contain 'Install sample data' toggle")
+	}
+}
+
+// TestSampleData_ViewShowsChecked verifies the toggle renders as [x] when enabled.
+func TestSampleData_ViewShowsChecked(t *testing.T) {
+	m := advanceToSetupConfig(t)
+	m.installSampleData = true
+	view := m.View()
+	if !contains(view, "[x]") {
+		t.Error("view should show [x] when installSampleData is true")
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
 		func() bool {
