@@ -214,3 +214,61 @@ func TestUpdate_SelectionCursor_DoesNotGoOutOfBounds(t *testing.T) {
 		t.Errorf("cursor should stay at 0 at start of list, got %d", m.cursor)
 	}
 }
+
+// --- view content ---
+
+// TestView_SelectionShowsNameAndVersion verifies that the selection screen
+// includes both the environment name and version (acceptance criterion 2).
+func TestView_SelectionShowsNameAndVersion(t *testing.T) {
+	m := New()
+	m.phase = phaseSelection
+	m.envs = []detector.DetectedEnvironment{
+		{
+			Env:      detector.Environment{Name: "DDEV", Version: "1.23.4"},
+			Detector: &mockDetector{info: detector.DetectorInfo{Name: "DDEV", InstallURL: "https://ddev.example.com"}},
+		},
+	}
+	view := m.View()
+	if !contains(view, "DDEV") {
+		t.Error("selection view should contain environment name 'DDEV'")
+	}
+	if !contains(view, "1.23.4") {
+		t.Error("selection view should contain environment version '1.23.4'")
+	}
+}
+
+// TestView_ErrorShowsInstallLinks verifies that the error phase shows
+// links for each known environment (acceptance criterion 5).
+func TestView_ErrorShowsInstallLinks(t *testing.T) {
+	m := New()
+	m.phase = phaseError
+	view := m.View()
+	for _, info := range detector.AllDetectorInfos() {
+		if !contains(view, info.InstallURL) {
+			t.Errorf("error view should contain install URL %q for %q", info.InstallURL, info.Name)
+		}
+	}
+}
+
+// TestView_DetectingPhaseShowsSpinner verifies that the detecting phase
+// renders spinner output (acceptance criterion 6).
+func TestView_DetectingPhaseShowsSpinner(t *testing.T) {
+	m := New()
+	m.phase = phaseDetecting
+	view := m.View()
+	if !contains(view, "Detecting") {
+		t.Error("detecting phase view should contain 'Detecting'")
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
+		func() bool {
+			for i := 0; i <= len(s)-len(substr); i++ {
+				if s[i:i+len(substr)] == substr {
+					return true
+				}
+			}
+			return false
+		}())
+}
