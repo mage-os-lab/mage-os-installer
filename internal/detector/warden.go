@@ -51,6 +51,7 @@ func (d *WardenDetector) buildSteps(config *Config) {
 			Step{Name: "Enable Hyvä modules"},
 		)
 	}
+	d.steps = append(d.steps, Step{Name: "Verify installation"})
 }
 
 func (d *WardenDetector) SetupCommandPrefix() string {
@@ -92,6 +93,7 @@ func (d *WardenDetector) SetupInstallFlags(config *Config) []SetupFlag {
 		{Flag: "--page-cache-redis-server", Value: "redis"},
 		{Flag: "--page-cache-redis-db", Value: "1"},
 		{Flag: "--page-cache-redis-port", Value: "6379"},
+		{Flag: "--base-url", Value: d.BaseURL(config.ProjectName) + "/"},
 		{Flag: "--timezone", Value: "Europe/Amsterdam"},
 		{Flag: "--currency", Value: "EUR"},
 		{Flag: "--admin-user", Value: config.AdminUser, Editable: true},
@@ -289,6 +291,18 @@ func (d *WardenDetector) Install(config *Config) error {
 			return fmt.Errorf("step %q failed: %w", d.Steps()[i].Name, err)
 		}
 		stepDone(config, i)
+	}
+
+	// verifyInstallation is always the last step regardless of optional steps.
+	verifyIdx := len(d.steps) - 1
+	if verifyIdx >= config.StartFromStep {
+		stepStart(config, verifyIdx)
+		verifyURL := d.BaseURL(config.ProjectName) + "/"
+		logf(config, "▸ Verifying store at %s", verifyURL)
+		if err := verifyInstallation(verifyURL, config.Log); err != nil {
+			return fmt.Errorf("installation verification failed: %w", err)
+		}
+		stepDone(config, verifyIdx)
 	}
 
 	return nil

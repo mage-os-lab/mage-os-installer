@@ -318,6 +318,158 @@ func TestVerifyInstallation_WrongXDistHeader(t *testing.T) {
 	}
 }
 
+// --- US-011: Warden environment setup ---
+
+// TestWardenBuildSteps_BaseStepsPresent verifies that the required installation
+// steps are present when no optional features are enabled.
+func TestWardenBuildSteps_BaseStepsPresent(t *testing.T) {
+	d := &WardenDetector{}
+	d.buildSteps(nil)
+
+	wantSubstrings := []string{
+		"Initialize Warden",
+		"SSL",
+		"Start",
+		"auth.json",
+		"Mage-OS",
+		"Configure application",
+		"Verify installation",
+	}
+
+	names := make([]string, len(d.steps))
+	for i, s := range d.steps {
+		names[i] = s.Name
+	}
+
+	for _, want := range wantSubstrings {
+		found := false
+		for _, name := range names {
+			if strings.Contains(name, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected a step containing %q, got steps: %v", want, names)
+		}
+	}
+}
+
+// TestWardenBuildSteps_VerifyIsLastStep checks that "Verify installation" is always
+// the last step, regardless of optional features.
+func TestWardenBuildSteps_VerifyIsLastStep(t *testing.T) {
+	cases := []struct {
+		name   string
+		config *Config
+	}{
+		{"base", nil},
+		{"with sample data", &Config{InstallSampleData: true}},
+		{"with Hyva", &Config{InstallHyva: true}},
+		{"with both", &Config{InstallSampleData: true, InstallHyva: true}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := &WardenDetector{}
+			d.buildSteps(tc.config)
+			last := d.steps[len(d.steps)-1]
+			if last.Name != "Verify installation" {
+				t.Errorf("expected last step to be 'Verify installation', got %q", last.Name)
+			}
+		})
+	}
+}
+
+// TestWardenBaseURL_UsesAppSubdomain verifies that the Warden base URL uses the
+// app.<project>.test format (AC8).
+func TestWardenBaseURL_UsesAppSubdomain(t *testing.T) {
+	d := &WardenDetector{}
+	url := d.BaseURL("my-shop")
+	if !strings.Contains(url, "my-shop") {
+		t.Errorf("BaseURL(%q) = %q, expected to contain project name", "my-shop", url)
+	}
+	if !strings.HasPrefix(url, "https://") {
+		t.Errorf("BaseURL(%q) = %q, expected to start with https://", "my-shop", url)
+	}
+	if !strings.Contains(url, "app.") {
+		t.Errorf("BaseURL(%q) = %q, expected to contain 'app.' subdomain", "my-shop", url)
+	}
+	if !strings.HasSuffix(url, ".test") {
+		t.Errorf("BaseURL(%q) = %q, expected to end with '.test'", "my-shop", url)
+	}
+}
+
+// TestWardenSetupInstallFlags_BaseURL verifies that setup:install includes the
+// base URL flag using the app.<project>.test domain (AC6).
+func TestWardenSetupInstallFlags_BaseURL(t *testing.T) {
+	d := &WardenDetector{}
+	cfg := &Config{ProjectName: "my-shop"}
+	flags := d.SetupInstallFlags(cfg)
+
+	flagMap := make(map[string]string, len(flags))
+	for _, f := range flags {
+		flagMap[f.Flag] = f.Value
+	}
+
+	val, ok := flagMap["--base-url"]
+	if !ok {
+		t.Fatal("--base-url flag not found in SetupInstallFlags")
+	}
+	if !strings.Contains(val, "app.my-shop") {
+		t.Errorf("--base-url = %q, expected to contain 'app.my-shop'", val)
+	}
+	if !strings.HasPrefix(val, "https://") {
+		t.Errorf("--base-url = %q, expected to start with https://", val)
+	}
+}
+
+// TestWardenSetupInstallFlags_DatabaseConfig verifies database connection flags.
+func TestWardenSetupInstallFlags_DatabaseConfig(t *testing.T) {
+	d := &WardenDetector{}
+	cfg := &Config{ProjectName: "test-project"}
+	flags := d.SetupInstallFlags(cfg)
+
+	wantFlags := map[string]string{
+		"--db-host":     "db",
+		"--db-name":     "magento",
+		"--db-user":     "magento",
+		"--db-password": "magento",
+	}
+
+	assertFlags(t, flags, wantFlags, "Warden database")
+}
+
+// TestWardenSetupInstallFlags_RedisCacheConfig verifies Redis cache flags.
+func TestWardenSetupInstallFlags_RedisCacheConfig(t *testing.T) {
+	d := &WardenDetector{}
+	cfg := &Config{ProjectName: "test-project"}
+	flags := d.SetupInstallFlags(cfg)
+
+	wantFlags := map[string]string{
+		"--cache-backend":              "redis",
+		"--cache-backend-redis-server": "redis",
+		"--page-cache":                 "redis",
+		"--page-cache-redis-server":    "redis",
+	}
+
+	assertFlags(t, flags, wantFlags, "Warden Redis cache")
+}
+
+// TestWardenSetupInstallFlags_OpenSearchConfig verifies OpenSearch flags.
+func TestWardenSetupInstallFlags_OpenSearchConfig(t *testing.T) {
+	d := &WardenDetector{}
+	cfg := &Config{ProjectName: "test-project"}
+	flags := d.SetupInstallFlags(cfg)
+
+	wantFlags := map[string]string{
+		"--search-engine":   "opensearch",
+		"--opensearch-host": "opensearch",
+		"--opensearch-port": "9200",
+	}
+
+	assertFlags(t, flags, wantFlags, "Warden OpenSearch")
+}
+
 // assertFlags checks that all wantFlags are present in the flags slice.
 func assertFlags(t *testing.T, flags []SetupFlag, wantFlags map[string]string, context string) {
 	t.Helper()
