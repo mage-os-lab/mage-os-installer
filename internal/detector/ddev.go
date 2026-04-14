@@ -413,8 +413,11 @@ func runInDir(dir string, logFn func(string), name string, args ...string) error
 	return err
 }
 
-// runComposerCreateProject runs a composer create-project command. If it fails,
-// it disables Composer's security advisory blocking (Composer 2.7+) and retries.
+// runComposerCreateProject runs a composer create-project command. If it fails
+// (e.g. because Composer 2.9+ blocks a dependency with a security advisory),
+// it retries using --no-install to skip dependency resolution, then runs
+// composer update --no-security-blocking to install dependencies while
+// bypassing the security advisory blocking.
 // If the retry also fails, the original error is returned.
 func runComposerCreateProject(config *Config, name string, args []string) error {
 	logf(config, "▸ %s %s", name, strings.Join(args, " "))
@@ -438,16 +441,33 @@ func runComposerCreateProject(config *Config, name string, args []string) error 
 	cleanupArgs := append(append([]string{}, execPrefix...), "rm", "-rf", targetDir)
 	_ = runInDir(config.Directory, nil, name, cleanupArgs...)
 
-	// Disable Composer's audit.block-insecure so security advisories don't
-	// prevent dependency resolution. --no-audit only skips post-install audit;
-	// this config setting is needed to unblock resolution itself.
-	disableArgs := append(append([]string{}, execPrefix...), "composer", "config", "--global", "audit.block-insecure", "false")
-	logf(config, "⚠ A security advisory may be blocking installation, disabling audit.block-insecure")
-	_ = runInDir(config.Directory, nil, name, disableArgs...)
+	// Retry: use --no-install to create the project skeleton without resolving
+	// dependencies (this bypasses the security advisory blocking entirely),
+	// then run composer update --no-security-blocking to install deps.
+	logf(config, "⚠ Retrying with --no-security-blocking to bypass security advisory blocking")
 
-	logf(config, "▸ %s %s", name, strings.Join(args, " "))
-	if retryErr := runInDir(config.Directory, config.Log, name, args...); retryErr != nil {
-		// Retry also failed; return the original error since it's more informative.
+	var noInstallArgs []string
+	for i, a := range args {
+		noInstallArgs = append(noInstallArgs, a)
+		if a == "create-project" {
+			noInstallArgs = append(noInstallArgs, "--no-install")
+			noInstallArgs = append(noInstallArgs, args[i+1:]...)
+			break
+		}
+	}
+	logf(config, "▸ %s %s", name, strings.Join(noInstallArgs, " "))
+	if err2 := runInDir(config.Directory, config.Log, name, noInstallArgs...); err2 != nil {
+		return err
+	}
+
+	// Install dependencies with security blocking disabled.
+	updateCmd := fmt.Sprintf(
+		"cd %s && COMPOSER_NO_SECURITY_BLOCKING=1 composer update --no-security-blocking",
+		targetDir,
+	)
+	updateArgs := append(append([]string{}, execPrefix...), "bash", "-c", updateCmd)
+	logf(config, "▸ %s %s", name, strings.Join(updateArgs, " "))
+	if err2 := runInDir(config.Directory, config.Log, name, updateArgs...); err2 != nil {
 		return err
 	}
 	return nil
