@@ -2,12 +2,15 @@ package detector
 
 import (
 	"bufio"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // DdevDetector checks for the DDEV development environment.
@@ -58,6 +61,7 @@ func (d *DdevDetector) buildSteps(config *Config) {
 			Step{Name: "Enable Hyvä modules"},
 		)
 	}
+	d.steps = append(d.steps, Step{Name: "Verify installation"})
 }
 
 func (d *DdevDetector) SetupCommandPrefix() string {
@@ -118,6 +122,8 @@ func (d *DdevDetector) SetupInstallFlags(config *Config) []SetupFlag {
 func (d *DdevDetector) Install(config *Config) error {
 	d.buildSteps(config)
 
+	composerCreateProjectIdx := 7
+
 	steps := [][]string{
 		{
 			"ddev", "config",
@@ -133,6 +139,7 @@ func (d *DdevDetector) Install(config *Config) error {
 		{"ddev", "add-on", "get", "b13/ddev-rabbitmq"},
 		{"ddev", "start"},
 		{"ddev", "rabbitmq", "apply"},
+		// 7: composer create-project — handled via runComposerCreateProject
 		{
 			"ddev", "exec", "composer", "create-project",
 			"--repository-url=https://repo.mage-os.org/",
@@ -151,8 +158,14 @@ func (d *DdevDetector) Install(config *Config) error {
 			continue
 		}
 		stepStart(config, i)
-		logf(config, "▸ %s", strings.Join(args, " "))
-		if err := runInDir(config.Directory, config.Log, args[0], args[1:]...); err != nil {
+		var err error
+		if i == composerCreateProjectIdx {
+			err = runComposerCreateProject(config, args[0], args[1:])
+		} else {
+			logf(config, "▸ %s", strings.Join(args, " "))
+			err = runInDir(config.Directory, config.Log, args[0], args[1:]...)
+		}
+		if err != nil {
 			return fmt.Errorf("step %q failed: %w", strings.Join(args, " "), err)
 		}
 		stepDone(config, i)
@@ -279,6 +292,50 @@ func (d *DdevDetector) Install(config *Config) error {
 		}
 	}
 
+	// verifyInstallation is always the last step regardless of optional steps.
+	verifyIdx := len(d.steps) - 1
+	if verifyIdx >= config.StartFromStep {
+		stepStart(config, verifyIdx)
+		baseURL := d.BaseURL(config.ProjectName)
+		logf(config, "▸ Verifying store at %s", baseURL)
+		if err := verifyInstallation(baseURL, config.Log); err != nil {
+			return fmt.Errorf("installation verification failed: %w", err)
+		}
+		stepDone(config, verifyIdx)
+	}
+
+	return nil
+}
+
+// verifyInstallation makes an HTTP GET request to baseURL and checks that the
+// response returns HTTP 200 and includes the "x-dist: Mage-OS" header.
+// DDEV uses self-signed TLS certificates, so TLS verification is skipped.
+func verifyInstallation(baseURL string, logFn func(string)) error {
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+		},
+	}
+
+	resp, err := client.Get(baseURL) //nolint:noctx
+	if err != nil {
+		return fmt.Errorf("HTTP request to %s failed: %w", baseURL, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("expected HTTP 200 from %s, got %d", baseURL, resp.StatusCode)
+	}
+
+	dist := resp.Header.Get("x-dist")
+	if !strings.Contains(dist, "Mage-OS") {
+		return fmt.Errorf("expected x-dist header to contain 'Mage-OS', got %q", dist)
+	}
+
+	if logFn != nil {
+		logFn(fmt.Sprintf("▸ Verified: %s → HTTP 200, x-dist: %s", baseURL, dist))
+	}
 	return nil
 }
 
@@ -354,6 +411,66 @@ func runInDir(dir string, logFn func(string), name string, args ...string) error
 	pr.Close()
 
 	return err
+}
+
+// runComposerCreateProject runs a composer create-project command. If it fails
+// (e.g. because Composer 2.9+ blocks a dependency with a security advisory),
+// it retries using --no-install to skip dependency resolution, then runs
+// composer update --no-security-blocking to install dependencies while
+// bypassing the security advisory blocking.
+// If the retry also fails, the original error is returned.
+func runComposerCreateProject(config *Config, name string, args []string) error {
+	logf(config, "▸ %s %s", name, strings.Join(args, " "))
+	err := runInDir(config.Directory, config.Log, name, args...)
+	if err == nil {
+		return nil
+	}
+
+	// Build the exec prefix (everything before "composer") for helper commands.
+	var execPrefix []string
+	for _, a := range args {
+		if a == "composer" {
+			break
+		}
+		execPrefix = append(execPrefix, a)
+	}
+
+	// The target directory is the last argument (e.g. /tmp/mage-os-project).
+	// Clean it up before retrying so composer doesn't fail with "directory not empty".
+	targetDir := args[len(args)-1]
+	cleanupArgs := append(append([]string{}, execPrefix...), "rm", "-rf", targetDir)
+	_ = runInDir(config.Directory, nil, name, cleanupArgs...)
+
+	// Retry: use --no-install to create the project skeleton without resolving
+	// dependencies (this bypasses the security advisory blocking entirely),
+	// then run composer update --no-security-blocking to install deps.
+	logf(config, "⚠ Retrying with --no-security-blocking to bypass security advisory blocking")
+
+	var noInstallArgs []string
+	for i, a := range args {
+		noInstallArgs = append(noInstallArgs, a)
+		if a == "create-project" {
+			noInstallArgs = append(noInstallArgs, "--no-install")
+			noInstallArgs = append(noInstallArgs, args[i+1:]...)
+			break
+		}
+	}
+	logf(config, "▸ %s %s", name, strings.Join(noInstallArgs, " "))
+	if err2 := runInDir(config.Directory, config.Log, name, noInstallArgs...); err2 != nil {
+		return err
+	}
+
+	// Install dependencies with security blocking disabled.
+	updateCmd := fmt.Sprintf(
+		"cd %s && COMPOSER_NO_SECURITY_BLOCKING=1 composer update --no-security-blocking",
+		targetDir,
+	)
+	updateArgs := append(append([]string{}, execPrefix...), "bash", "-c", updateCmd)
+	logf(config, "▸ %s %s", name, strings.Join(updateArgs, " "))
+	if err2 := runInDir(config.Directory, config.Log, name, updateArgs...); err2 != nil {
+		return err
+	}
+	return nil
 }
 
 // copyAuthJSON copies ~/.composer/auth.json into the running DDEV web container.
