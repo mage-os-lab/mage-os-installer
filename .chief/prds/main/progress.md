@@ -1,0 +1,328 @@
+## Codebase Patterns
+- Uses Bubble Tea TUI framework (`github.com/charmbracelet/bubbletea`) with a central `Model` and phase-based state machine
+- Text inputs use `github.com/charmbracelet/bubbles/textinput`
+- Phases are defined as `phase int` constants (e.g., `phaseNameInput`, `phaseDirectoryInput`, etc.)
+- Detection runs in background goroutine, results cached in model until user advances
+- Tests are in `internal/tui/tui_test.go` using `sendMsg()` helper to drive state transitions
+- Run tests with `/usr/local/go/bin/go test ./...`
+- Detector tests live in `internal/detector/detector_test.go` and use `allDetectors()` (package-internal) to inspect all registered detectors
+- TUI view tests call `m.View()` directly and use a local `contains()` helper to assert rendered output
+- `DdevDetector.buildSteps()` and `WardenDetector.buildSteps()` both append "Verify installation" as the last step always; use `len(d.steps) - 1` for its index in `Install()` (optional steps are dynamic)
+- `verifyInstallation()` in `ddev.go` is unexported but shared; test it from `package detector` tests using `httptest.NewServer`
+- Warden's `BaseURL` returns `"https://app.<name>.test"` (no trailing slash); append `"/"` when used in config:set and setup:install `--base-url`
+
+---
+
+## [2026-04-14] - US-004
+- All implementation for sample data was already in place:
+  - `installSampleData bool` field in `Model` (default `false`, set in `initSetupInputs()`)
+  - Toggle rendered in `phaseSetupConfig` view with `[ ]`/`[x]` checkbox
+  - Space bar handler in `Update()` at `toggleFocus == -2` toggles the flag
+  - `Config.InstallSampleData` field in `config.go`
+  - `buildSteps()` in both `ddev.go` and `warden.go` conditionally appends "Install sample data" step
+  - `Install()` in both detectors conditionally runs `sampledata:deploy` + `setup:upgrade` + `cache:flush`
+  - CI matrix in `.github/workflows/build-and-test.yml` has `regular`/`sampledata` variants for both DDEV and Warden
+- Added 6 new unit tests:
+  - `TestSampleData_DefaultIsOff` — installSampleData is false after initSetupInputs
+  - `TestSampleData_ToggledBySpace` — space on the toggle enables/disables it
+  - `TestSampleData_ViewContainsToggle` — view contains "Install sample data" label
+  - `TestSampleData_ViewShowsChecked` — view shows `[x]` when enabled
+  - `TestDdevBuildSteps_SampleDataStep` — step present/absent based on config
+  - `TestWardenBuildSteps_SampleDataStep` — step present/absent based on config
+- Files changed:
+  - `internal/tui/tui_test.go`
+  - `internal/detector/detector_test.go`
+- **Learnings for future iterations:**
+  - For stories marked "passes: false" where implementation already exists, the missing piece is usually explicit unit tests covering each acceptance criterion
+  - To navigate to the sample data toggle in tests: Tab `len(setupFieldDefs)` times from the first admin field
+  - `toggleFocus == -2` is the sample data toggle; `toggleFocus == -1` is the Hyvä toggle — this is the navigation model
+---
+
+## [2026-04-14] - US-011
+- Added "Verify installation" as the last step in `WardenDetector.buildSteps()` (was missing, matching DDEV pattern)
+- Added `--base-url` flag to `WardenDetector.SetupInstallFlags()` using `d.BaseURL(config.ProjectName) + "/"` (was missing)
+- Added verify step execution at the end of `WardenDetector.Install()` using `verifyInstallation()` (shared with DDEV)
+- Added 7 new tests covering: base steps, verify-is-last, base URL format, `--base-url` flag, DB flags, Redis cache flags, OpenSearch flags
+- Files changed:
+  - `internal/detector/warden.go`
+  - `internal/detector/detector_test.go`
+- **Learnings for future iterations:**
+  - Warden's `Install()` uses a slice of closures (`allSteps []func() error`) iterated by index — different from DDEV's sequential steps slice. The verify step is appended AFTER the loop.
+  - `verifyInstallation()` is defined in `ddev.go` but used by both detectors (same package); no duplication needed.
+  - Warden `BaseURL` returns no trailing slash; use `+ "/"` for Magento base URL configuration.
+  - The step count for verify index must be computed from `len(d.steps) - 1` AFTER `buildSteps` is called at the top of `Install()`.
+---
+
+## [2026-04-14] - US-001
+- Verified that project name and install directory input phases were already fully implemented in `internal/tui/tui.go`
+- `New()` seeds `nameInput` with `filepath.Base(cwd)` via `currentDirName()`
+- `enterDirectoryPhase()` computes default directory via `defaultDirectory()`: cwd if name unchanged, `cwd/<name>` otherwise
+- Both `nameInput` and `dirInput` are `textinput.Model` (editable text fields)
+- Enter key advances through both phases
+- All tests in `internal/tui/tui_test.go` pass
+- Files involved: `internal/tui/tui.go` (no changes needed)
+- **Learnings for future iterations:**
+  - The codebase already had the full phase-based flow implemented; US-001 was a green-field verification
+  - Test helpers: `sendMsg()`, `pressEnter()`, `makeDetectedEnv()` in `tui_test.go`
+  - `originalName` field tracks the default so `defaultDirectory()` can distinguish user-changed vs default name
+  - Detection runs in parallel via `detectEnvironments` cmd in `Init()`, results cached during input phases
+---
+
+## [2026-04-14] - US-002
+- Verified that all acceptance criteria were already implemented in the codebase:
+  - `DdevDetector.Detect()` and `WardenDetector.Detect()` use `exec.LookPath` to check PATH
+  - Both detectors registered in `allDetectors()` in `internal/detector/detector.go`
+  - Selection phase view shows `env.Env.Name` and `env.Env.Version`
+  - `advanceFromDetection()` auto-selects when 1 env, shows selection when >1, errors when 0
+  - `phaseError` view shows install links via `detector.AllDetectorInfos()`
+  - `detectEnvironments` Cmd launched in `Init()` runs asynchronously; `phaseDetecting` shows spinner
+- Added targeted tests to explicitly cover all 6 acceptance criteria:
+  - `TestDetectors_DdevAndWardenBothRegistered` — verifies both are in the registry
+  - `TestDetectors_EnvironmentHasName` — verifies Detect() returns Environment with Name
+  - `TestView_SelectionShowsNameAndVersion` — verifies version appears in selection view
+  - `TestView_ErrorShowsInstallLinks` — verifies install links in error phase view
+  - `TestView_DetectingPhaseShowsSpinner` — verifies "Detecting" text in detecting phase
+- Files changed:
+  - `internal/detector/detector_test.go` — new tests for detector registry and environment output
+  - `internal/tui/tui_test.go` — new view tests + local `contains()` helper
+- **Learnings for future iterations:**
+  - `allDetectors()` is package-internal; use it in `detector` package tests but not from outside
+  - TUI view tests are straightforward: set `m.phase` directly, call `m.View()`, assert on string content
+  - Stories marked "passes: false" may already be fully implemented; always run tests first before writing new code
+  - `TestDetectors_EnvironmentHasName` gracefully skips if binary not on PATH — good pattern for binary-dependent tests
+---
+
+## [2026-04-14] - US-010
+- Added `verifyInstallation()` to `internal/detector/ddev.go`: makes HTTP GET to base URL, checks HTTP 200 and `x-dist: Mage-OS` header; uses `InsecureSkipVerify` for DDEV's self-signed TLS certs
+- Updated `DdevDetector.buildSteps()` to always append `{Name: "Verify installation"}` as the last step
+- Updated `DdevDetector.Install()` to execute the verify step using `len(d.steps) - 1` as its index (avoids fragile nextIdx tracking across optional steps)
+- Added 14 new tests in `internal/detector/detector_test.go`:
+  - `TestDdevBuildSteps_BaseStepsPresent` — all required step names present
+  - `TestDdevBuildSteps_VerifyIsLastStep` — verify is last across all optional combinations
+  - `TestDdevSetupInstallFlags_DatabaseConfig` — db-host, db-name, db-user, db-password
+  - `TestDdevSetupInstallFlags_RedisCacheConfig` — cache-backend=redis, page-cache=redis
+  - `TestDdevSetupInstallFlags_RedisSessionConfig` — session-save=redis
+  - `TestDdevSetupInstallFlags_OpenSearchConfig` — search-engine=opensearch
+  - `TestDdevSetupInstallFlags_RabbitMQConfig` — amqp-host=rabbitmq
+  - `TestDdevSetupInstallFlags_AdminCredentials` — all five admin fields
+  - `TestDdevBaseURL_UsesProjectName` — https://<name>.ddev.site
+  - `TestVerifyInstallation_Success` — httptest returning 200 + x-dist: Mage-OS
+  - `TestVerifyInstallation_Non200` — error on 503
+  - `TestVerifyInstallation_MissingXDistHeader` — error when header absent
+  - `TestVerifyInstallation_WrongXDistHeader` — error when header is wrong value
+- Files changed:
+  - `internal/detector/ddev.go`
+  - `internal/detector/detector_test.go`
+- **Learnings for future iterations:**
+  - The Hyvä block in `Install()` does NOT increment `nextIdx` after hyvaEnableIdx — always use `len(d.steps) - 1` to locate the verify step, not `nextIdx`
+  - `httptest.NewServer` is the right pattern for testing HTTP client code in Go; plain `http.Handler` is enough, no TLS needed for unit tests (HTTPS skipping applies to real DDEV only)
+  - `assertFlags()` helper added to `detector_test.go` — reuse it for future flag tests
+---
+
+## [2026-04-14] - US-005
+- All implementation for Hyvä theme was already in place:
+  - `installHyva bool` field in `Model` (default `false`, set in `initSetupInputs()`)
+  - Toggle rendered in `phaseSetupConfig` view with `[ ]`/`[x]` checkbox at `toggleFocus == -1`
+  - Space bar handler in `Update()` at `toggleFocus == -1` toggles the flag
+  - Hyvä credential fields (`hyvaFieldDefs`: Repo URL, Auth token) shown only when `m.installHyva == true`
+  - `Config.InstallHyva`, `Config.HyvaRepoURL`, `Config.HyvaAuthToken` fields in `config.go`
+  - `buildSteps()` in both `ddev.go` and `warden.go` conditionally appends "Configure Hyvä repository", "Install Hyvä theme", "Enable Hyvä modules" steps
+  - `Install()` in both detectors conditionally runs composer config + require + module:enable + theme activation
+  - CI matrix in `.github/workflows/build-and-test.yml` has `hyva` and `hyva-sampledata` variants for both DDEV and Warden
+  - CI "Check if this variant should run" step skips Hyvä variants when `HYVA_REPO_URL` secret is not configured
+- Added 8 new unit tests:
+  - `TestHyva_DefaultIsOff` — installHyva is false after initSetupInputs
+  - `TestHyva_ToggledBySpace` — space on the Hyvä toggle enables/disables it
+  - `TestHyva_ViewContainsToggle` — view contains "Install Hyvä" label
+  - `TestHyva_ViewShowsChecked` — view shows `[x]` when enabled
+  - `TestHyva_CredentialFieldsHiddenByDefault` — Repo URL/Auth token not shown when disabled
+  - `TestHyva_CredentialFieldsAppearsWhenEnabled` — Repo URL/Auth token shown when enabled
+  - `TestDdevBuildSteps_HyvaSteps` — steps present/absent based on config for DDEV
+  - `TestWardenBuildSteps_HyvaSteps` — steps present/absent based on config for Warden
+- Files changed:
+  - `internal/tui/tui_test.go`
+  - `internal/detector/detector_test.go`
+- **Learnings for future iterations:**
+  - Navigate to Hyvä toggle in tests: Tab `len(setupFieldDefs) + 1` times from admin field 0
+  - `navigateToHyvaToggle()` helper added to `tui_test.go` — reuse for future Hyvä-related tests
+  - For stories marked "passes: false" where all implementation already exists, the missing piece is unit tests for each acceptance criterion
+---
+
+## [2026-04-14] - US-003
+- Added sensible defaults for admin email (`admin@example.com`) and password (`Admin123!`) in `setupFieldDefaults` — were previously empty strings
+- Added 5 new tests in `internal/tui/tui_test.go` covering all acceptance criteria:
+  - `TestSetupConfig_HasAllFiveFields` — all five field labels present in the view
+  - `TestSetupConfig_DefaultsPreFilled` — all fields have non-empty defaults after initSetupInputs
+  - `TestSetupConfig_TabAdvancesField` — Tab moves focus to next field
+  - `TestSetupConfig_ShiftTabGoesBack` — Shift+Tab moves focus to previous field
+  - `TestSetupConfig_ValidationRejectsEmpty` — empty required field blocks advance to preview
+- Files changed:
+  - `internal/tui/tui.go` — updated `setupFieldDefaults`
+  - `internal/tui/tui_test.go` — new tests + `advanceToSetupConfig` helper
+- **Learnings for future iterations:**
+  - `setupFieldDefaults` drives default values; index order matches `setupFieldDefs` (user, password, email, firstname, lastname)
+  - `advanceToSetupConfig()` is a reusable test helper: name→dir→setup config using a mock env
+  - `inTogglePhase` and `toggleFocus` track whether focus is in the admin fields section or the toggle/Hyvä section — check both when asserting focus position
+---
+
+## [2026-04-14] - US-012
+- `.goreleaser.yml` already existed and was committed, but was invalid for GoReleaser v2
+- Fixed two GoReleaser v2 incompatibilities:
+  1. Added `version: 2` at the top (required; without it, GoReleaser v2 treats config as version 0 and rejects it)
+  2. Changed `archives[].format: binary` → `archives[].formats: [binary]` (the `format` field is deprecated in v2)
+- CI workflow `.github/workflows/build-and-test.yml` was already correctly configured:
+  - `release` job has `needs: [go-test, ddev-test, warden-test]` (all tests must pass first)
+  - `release` job has `if: startsWith(github.ref, 'refs/tags/v')` (only on v* tags)
+  - Uses `goreleaser/goreleaser/v2@latest` for releases
+- Files changed:
+  - `.goreleaser.yml` — added `version: 2`, changed `format: binary` → `formats: [binary]`
+- **Learnings for future iterations:**
+  - GoReleaser v2 requires `version: 2` at the top of the config; without it, the CLI rejects the file even if everything else is valid
+  - `archives[].format` is deprecated in GoReleaser v2; use `archives[].formats` (array) instead
+  - Run `go run github.com/goreleaser/goreleaser/v2@latest check` to validate the config without a real release
+  - The workflow installs `goreleaser/v2@latest` — always validate config against v2 syntax
+---
+
+## [2026-04-14] - US-013
+- All acceptance criteria were already implemented in `.github/workflows/build-and-test.yml` except one:
+  - `go-test` job runs `go test -v ./...` on every push ✅
+  - `ddev-test` job has a 4-variant matrix (regular, sampledata, hyva, hyva-sampledata) ✅
+  - `warden-test` job has the same 4-variant matrix ✅
+  - Both jobs verify: binary runs (`bin/magento`), HTTP 200, `x-dist: Mage-OS` header ✅
+  - Both jobs verify product count > 0 for sample data variants ✅
+  - Both jobs verify `Hyva/default` theme in DB for Hyvä variants ✅
+  - `warden-test` had a "Debug on failure" step; `ddev-test` was missing it ❌ → added
+- Added "Debug on failure" step to `ddev-test` job (docker ps, .ddev/.env, container logs) matching the pattern in `warden-test`
+- Files changed:
+  - `.github/workflows/build-and-test.yml`
+- **Learnings for future iterations:**
+  - When a story has `"passes": false`, always compare each acceptance criterion line-by-line against the implementation — one missing step can be the only gap
+  - Debug-on-failure steps use `if: failure() && steps.should-run.outputs.skip != 'true'` so they only run when the job actually failed and wasn't skipped
+  - DDEV install directory in CI is `test-mageos/`; DDEV env files live at `test-mageos/.ddev/.env` and `test-mageos/.env`
+---
+
+## [2026-04-14] - US-006
+- All core implementation for the preview screen was already in place:
+  - `phaseSetupPreview` phase defined and rendered in `View()`
+  - `previewScroll` state + up/down key handlers in `Update()`
+  - `highlightStyle` (gold `#FFD700`) applied to `f.Editable` flags
+  - `SetupInstallFlags()` / `SetupCommandPrefix()` from the detector drive the rendered command
+- Only gap: acceptance criterion said "Backspace to go back" but code only handled `"b"` and `"esc"` → added `"backspace"` key and updated hint text to say "Backspace to go back"
+- Added 7 new unit tests:
+  - `TestPreview_ShowsSetupInstallCommand` — preview renders "setup:install"
+  - `TestPreview_ShowsAllFlags` — all flag names from SetupInstallFlags appear in view
+  - `TestPreview_EditableValuesAppear` — editable (user-supplied) values visible
+  - `TestPreview_ScrollsWithArrowKeys` — down/up changes `previewScroll`
+  - `TestPreview_UpArrowDoesNotGoNegative` — scroll floor is 0
+  - `TestPreview_BackspaceGoesBackToSetupConfig` — Backspace returns to `phaseSetupConfig`
+  - `TestPreview_EnterThenSudoCachedAdvancesToInstall` — Enter + sudoCachedMsg → `phaseInstalling`
+- Updated `mockDetector.SetupInstallFlags` to return three real flags (db-host, admin-user, admin-password) so preview tests have content to assert on
+- Files changed:
+  - `internal/tui/tui.go` — added `"backspace"` case and updated hint text
+  - `internal/tui/tui_test.go` — updated mockDetector, added helper + 7 new tests
+- **Learnings for future iterations:**
+  - Enter in `phaseSetupPreview` fires `tea.ExecProcess` for `sudo -v`; the phase only changes when `sudoCachedMsg` arrives — do NOT assert phase change on Enter alone
+  - `mockDetector.SetupInstallFlags` must return non-nil flags for preview tests to be meaningful
+  - Bubble Tea backspace key string is `"backspace"` (maps to `tea.KeyBackspace`)
+---
+
+## [2026-04-14] - US-008
+- All implementation for resume-from-failure was already in place:
+  - `phaseInstallDone` view shows "Last output:" header + last 10 log lines when `m.installErr != nil`
+  - `r` key handler in `Update()` (at `phaseInstallDone || phaseError` block): finds failed step, resets non-done steps to pending, sets `installCfg.StartFromStep = failedIdx`, transitions to `phaseInstalling` and calls `runInstall`
+  - `Config.StartFromStep` field in `config.go`; both `DdevDetector.Install()` and `WardenDetector.Install()` skip steps with index < `StartFromStep`
+  - `enter`, `q`, `esc` keys all call `tea.Quit` in the failure screen handler
+- Added 5 new unit tests:
+  - `TestResume_FailureShowsLast10LogLines` — last 10 lines shown, lines beyond cut-off not shown
+  - `TestResume_RetryTransitionsToInstalling` — pressing r → phaseInstalling + StartFromStep = failed index
+  - `TestResume_CompletedStepsSkippedOnRetry` — done steps stay done, failed/pending reset to pending
+  - `TestResume_EnterExitsInstaller` — Enter returns tea.Quit cmd
+  - `TestResume_QExitsInstaller` — q returns tea.Quit cmd
+- Files changed:
+  - `internal/tui/tui_test.go`
+- **Learnings for future iterations:**
+  - To test `tea.Quit`: call `m.Update(msg)` directly (not `sendMsg`), check `cmd != nil`, then call `cmd()` and check for non-nil message. Functions can't be compared in Go, so call the Cmd.
+  - `r` only retries when `m.phase == phaseInstallDone && m.installErr != nil` — not when `m.phase == phaseError` (that's the "no environment found" error, a different kind)
+  - Use `t.TempDir()` for the `Config.Directory` in retry tests — `runInstall` calls `os.MkdirAll(cfg.Directory, 0755)` which needs a valid path
+  - For log line visibility tests, use zero-padded format like `log-line-%02d` so "log-line-04" is never a substring of "log-line-14"
+---
+
+## [2026-04-14] - US-007
+- All implementation for multi-step installation with live logging was already in place:
+  - `installStep` struct with `name` and `status` fields
+  - `stepStatus` constants: `stepPending`, `stepRunning`, `stepDone`, `stepFailed`
+  - `initInstallSteps()` loads steps from `m.selected.Detector.Steps()`
+  - `phaseInstalling` view renders all steps with correct indicators: `•` (pending), `▸` (running), `✓` (done), `✗` (failed)
+  - `logLines` slice + `logBoxStyle` renders a scrolling log box showing streamed command output
+  - `stepStartMsg` / `stepDoneMsg` / `logMsg` types drive state transitions from the goroutine
+  - All steps rendered in a loop, so completed/failed steps remain visible while next step runs
+- Added 11 new unit tests covering all 4 acceptance criteria:
+  - `TestInstall_NamedStepsAppearInView` — AC1: named steps from detector appear in view
+  - `TestInstall_PendingStepShowsDot` — AC2: `•` indicator for pending
+  - `TestInstall_RunningStepShowsArrow` — AC2: `▸` indicator for running
+  - `TestInstall_DoneStepShowsCheckmark` — AC2: `✓` indicator for done
+  - `TestInstall_FailedStepShowsCross` — AC2: `✗` indicator for failed
+  - `TestInstall_LogBoxShowsStreamedOutput` — AC3: log lines appear in log box
+  - `TestInstall_LogMsgAppendsToLogLines` — AC3: logMsg appends to logLines
+  - `TestInstall_AllStepsRemainVisible` — AC4: done/running/pending steps all visible
+  - `TestInstall_FailedStepRemainsVisibleWhileNextRuns` — AC4: failed step stays visible
+  - `TestInstall_StepStartMsgSetsRunning` — stepStartMsg sets status to running
+  - `TestInstall_StepDoneMsgSetsDone` — stepDoneMsg sets status to done
+- Also added `steps []detector.Step` field to `mockDetector` and `makeDetectedEnvWithSteps` helper
+- Files changed:
+  - `internal/tui/tui_test.go`
+- **Learnings for future iterations:**
+  - `sendMsg()` discards returned `tea.Cmd`, so handlers that call `waitForLog(m.logCh)` are safe to test even with nil channels — the closure is never executed
+  - `advanceToInstalling()` helper reuses `advanceToSetupPreview` flow then sends Enter + `sudoCachedMsg`
+  - Setting `m.selected` is required for any test that renders `phaseInstalling` view (it accesses `m.selected.Env.Name`)
+  - Adding a `steps` field to `mockDetector` doesn't break existing tests (nil default matches prior `return nil` behavior)
+---
+
+## [2026-04-14] - US-014
+- Created `internal/selfupdate/selfupdate.go`:
+  - `Updater` struct with injectable `ReplaceFunc` and `ReexecFunc` for testability
+  - `Run(currentVersion)` package-level convenience function
+  - Fetches GitHub releases API (`/repos/mage-os/mage-os-install/releases/latest`)
+  - Compares versions with `v`-prefix normalization; prints "Already up to date: vX.Y.Z" when current
+  - Constructs GoReleaser binary artifact name: `mage-os-install_{version}_{os}_{arch}[.exe]`
+  - Downloads binary to temp file, verifies SHA-256 against `checksums.txt`, then atomically replaces executable
+  - Re-execs via `exec.Command` (cross-platform), stripping `--self-update` from forwarded args
+- Updated `main.go`: added `var version = "dev"` (set by ldflags at release), `flag.Bool("self-update", ...)`, handles flag before TUI starts
+- Updated `.goreleaser.yml`: added `ldflags: [-s -w -X main.version={{ .Tag }}]` to embed version
+- 17 unit tests in `internal/selfupdate/selfupdate_test.go` using `httptest` servers
+- Files changed:
+  - `internal/selfupdate/selfupdate.go` (new)
+  - `internal/selfupdate/selfupdate_test.go` (new)
+  - `main.go`
+  - `.goreleaser.yml`
+- **Learnings for future iterations:**
+  - GoReleaser binary archive default name: `{project}_{version}_{os}_{arch}[.exe]` — `{{ .Version }}` strips the `v` prefix; `{{ .Os }}` matches `runtime.GOOS`; `{{ .Arch }}` matches `runtime.GOARCH`
+  - Injectable `ReplaceFunc`/`ReexecFunc` are the right pattern to avoid OS-level side effects in unit tests
+  - Avoid forward-referencing a `*httptest.Server`'s `.URL` inside its own handler closure — the server isn't assigned yet; use separate asset + API servers instead
+  - `flag.Parse()` in `main.go` is safe for a TUI-only binary; the TUI itself reads no flags, so adding `--self-update` does not break existing usage
+  - GoReleaser v2 `check` command validates ldflags syntax without a real release
+---
+
+## [2026-04-14] - US-009
+- All implementation was already present in `internal/tui/tui.go`:
+  - `phaseOpenBrowser` phase defined with a dedicated view showing "Open {url} in your browser?"
+  - `openBrowser()` function handles macOS (`open`), Linux (`xdg-open`), Windows (`rundll32`)
+  - `y` key → calls `openBrowser(url)`, sets `m.browserOpened = true`, transitions to `phaseInstallDone`
+  - `n`/`enter`/`esc` keys → skip and transition to `phaseInstallDone` with `browserOpened = false`
+  - `q` → caught by global key handler at top of `Update()`, quits app (browserOpened stays false)
+  - `phaseInstallDone` success view shows the opened URL when `m.browserOpened == true`
+- Added 6 unit tests in `internal/tui/tui_test.go`:
+  - `TestOpenBrowser_ViewContainsPrompt` — AC1: view shows "in your browser" prompt
+  - `TestOpenBrowser_ViewContainsStoreURL` — AC4: URL in prompt matches configured base URL
+  - `TestOpenBrowser_YOpensURLAndAdvancesToDone` — AC2: y sets browserOpened=true, goes to done phase
+  - `TestOpenBrowser_NSkipsBrowserAndAdvancesToDone` — AC3: n skips browser, goes to done phase
+  - `TestOpenBrowser_QExitsWithoutOpeningBrowser` — AC3: q quits without setting browserOpened
+  - `TestOpenBrowser_DoneViewShowsOpenedURL` — AC2 follow-up: done screen shows the opened URL
+- Added `advanceToOpenBrowser()` test helper
+- Files changed:
+  - `internal/tui/tui_test.go`
+- **Learnings for future iterations:**
+  - `q` in `phaseOpenBrowser` is handled by the global `ctrl+c/q` handler at the top of `Update()` — it quits immediately without reaching the phase-specific handler
+  - `browserOpened` bool on `Model` tracks whether the browser was opened; the done view conditionally shows the URL based on this flag
+  - `advanceToOpenBrowser()` sets `m.phase = phaseOpenBrowser` directly and wires `m.selected` — no need to drive through sudo/install flow for browser-phase tests
+---

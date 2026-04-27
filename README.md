@@ -75,6 +75,6 @@ The installer will walk you through:
 
 ## Wishlist
 
-- Toggle sample data.
-- Install Hyvä.
-- Add self-update option.
+- Save & reuse a config profile (`~/.mage-os-install.yaml`) so re-running skips prompts.
+- Custom locale / currency / timezone defaults (instead of always en_US).
+- Non-interactive / scripted mode via flags or a config file (useful for CI and demos).

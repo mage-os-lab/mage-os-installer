@@ -881,6 +881,7 @@ func TestResume_RetryTransitionsToInstalling(t *testing.T) {
 	}
 
 	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	<-m.logCh // wait for runInstall goroutine to exit before t.TempDir cleanup
 
 	if m.phase != phaseInstalling {
 		t.Errorf("pressing r should transition to phaseInstalling, got %d", m.phase)
@@ -912,6 +913,7 @@ func TestResume_CompletedStepsSkippedOnRetry(t *testing.T) {
 	}
 
 	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	<-m.logCh // wait for runInstall goroutine to exit before t.TempDir cleanup
 
 	// Completed steps should remain done.
 	if m.installSteps[0].status != stepDone {
