@@ -15,7 +15,13 @@ var version = "dev"
 
 func main() {
 	doSelfUpdate := flag.Bool("self-update", false, "check for a newer version and update if available")
+	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println(version)
+		os.Exit(0)
+	}
 
 	if *doSelfUpdate {
 		if err := selfupdate.Run(version); err != nil {

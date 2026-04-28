@@ -18,7 +18,7 @@ import (
 	"strings"
 )
 
-const defaultAPIURL = "https://api.github.com/repos/mage-os/mage-os-install/releases/latest"
+const defaultAPIURL = "https://api.github.com/repos/mage-os-lab/mage-os-installer/releases/latest"
 
 type githubRelease struct {
 	TagName string        `json:"tag_name"`
@@ -32,7 +32,7 @@ type githubAsset struct {
 
 // Updater performs self-updates. Its fields may be overridden for testing.
 type Updater struct {
-	// APIURL is the GitHub releases endpoint. Defaults to the mage-os/mage-os-install API.
+	// APIURL is the GitHub releases endpoint. Defaults to the mage-os-lab/mage-os-installer API.
 	APIURL string
 	// Client is the HTTP client used for all requests.
 	Client *http.Client
@@ -148,15 +148,14 @@ func versionsEqual(a, b string) bool {
 }
 
 // platformAssetName returns the GoReleaser binary archive name for the current
-// OS/arch. GoReleaser default template: {project}_{version}_{os}_{arch}[.exe]
-// The version in the name strips the leading "v" (GoReleaser's {{ .Version }}).
+// OS/arch. Matches the .goreleaser.yml template: {binary}_{os}_{arch}[.exe]
 func platformAssetName(tagName string) string {
-	version := strings.TrimPrefix(tagName, "v")
+	_ = tagName
 	ext := ""
 	if runtime.GOOS == "windows" {
 		ext = ".exe"
 	}
-	return fmt.Sprintf("mage-os-install_%s_%s_%s%s", version, runtime.GOOS, runtime.GOARCH, ext)
+	return fmt.Sprintf("mage-os-install_%s_%s%s", runtime.GOOS, runtime.GOARCH, ext)
 }
 
 // downloadToTemp fetches url and writes the body to a new temporary file.

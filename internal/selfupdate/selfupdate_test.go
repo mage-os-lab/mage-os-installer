@@ -59,13 +59,13 @@ func TestVersionsEqual_DevNeverEqualsRelease(t *testing.T) {
 
 // --- platformAssetName -------------------------------------------------------
 
-func TestPlatformAssetName_ContainsVersionWithoutV(t *testing.T) {
+func TestPlatformAssetName_OmitsVersion(t *testing.T) {
 	name := platformAssetName("v1.2.3")
-	if strings.Contains(name, "v1.2.3") {
-		t.Errorf("asset name should not contain 'v' prefix, got %q", name)
+	if strings.Contains(name, "1.2.3") {
+		t.Errorf("asset name should not contain version, got %q", name)
 	}
-	if !strings.Contains(name, "1.2.3") {
-		t.Errorf("asset name should contain version 1.2.3, got %q", name)
+	if !strings.HasPrefix(name, "mage-os-install_") {
+		t.Errorf("asset name should start with binary name, got %q", name)
 	}
 }
 
