@@ -61,6 +61,9 @@ func (d *DdevDetector) buildSteps(config *Config) {
 			Step{Name: "Enable Hyvä modules"},
 		)
 	}
+	if config != nil && config.InitGit {
+		d.steps = append(d.steps, Step{Name: "Initialize Git repository"})
+	}
 	d.steps = append(d.steps, Step{Name: "Verify installation"})
 }
 
@@ -281,6 +284,18 @@ func (d *DdevDetector) Install(config *Config) error {
 				return fmt.Errorf("cache:flush failed: %w", err)
 			}
 			stepDone(config, hyvaEnableIdx)
+		}
+		nextIdx++
+	}
+
+	if config.InitGit {
+		gitIdx := nextIdx
+		if gitIdx >= config.StartFromStep {
+			stepStart(config, gitIdx)
+			if err := initGitRepository(config); err != nil {
+				return fmt.Errorf("git init failed: %w", err)
+			}
+			stepDone(config, gitIdx)
 		}
 	}
 

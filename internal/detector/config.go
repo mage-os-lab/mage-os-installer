@@ -25,6 +25,9 @@ type Config struct {
 	// Sample data
 	InstallSampleData bool
 
+	// Git repository
+	InitGit bool
+
 	// Hyvä theme installation
 	InstallHyva   bool
 	HyvaRepoURL   string

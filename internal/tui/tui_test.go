@@ -339,7 +339,7 @@ func TestSetupConfig_ValidationRejectsEmpty(t *testing.T) {
 	// by pressing Enter on the last field in the form.
 	// Simulate being on the last hyva toggle (absPos == totalFields-1) with enter.
 	// Easier: set absPos to last and send enter directly via pressing tab many times.
-	totalFields := len(m.setupInputs) + 2 // +2 for toggles
+	totalFields := len(m.setupInputs) + toggleCount
 	for i := 0; i < totalFields-1; i++ {
 		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
 	}
@@ -373,7 +373,7 @@ func TestSampleData_ToggledBySpace(t *testing.T) {
 		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
 	}
 	// Now at sample data toggle (absPos == len(setupInputs))
-	if !m.inTogglePhase || m.toggleFocus != -2 {
+	if !m.inTogglePhase || m.toggleFocus != sampleDataToggle {
 		t.Fatalf("expected focus on sample data toggle; inTogglePhase=%v toggleFocus=%d", m.inTogglePhase, m.toggleFocus)
 	}
 
@@ -414,8 +414,8 @@ func TestSampleData_ViewShowsChecked(t *testing.T) {
 // navigateToHyvaToggle tabs through all admin fields and the sample data toggle
 // to land on the Hyvä toggle.
 func navigateToHyvaToggle(m Model) Model {
-	// len(setupFieldDefs) tabs → sample data toggle; one more → Hyvä toggle
-	for i := 0; i < len(setupFieldDefs)+1; i++ {
+	// len(setupFieldDefs) tabs → sample data toggle; the rest → Hyvä toggle
+	for i := 0; i < len(setupFieldDefs)+toggleCount-1; i++ {
 		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
 	}
 	return m
@@ -435,7 +435,7 @@ func TestHyva_ToggledBySpace(t *testing.T) {
 	m := advanceToSetupConfig(t)
 	m = navigateToHyvaToggle(m)
 
-	if !m.inTogglePhase || m.toggleFocus != -1 {
+	if !m.inTogglePhase || m.toggleFocus != hyvaToggle {
 		t.Fatalf("expected focus on Hyvä toggle; inTogglePhase=%v toggleFocus=%d", m.inTogglePhase, m.toggleFocus)
 	}
 
@@ -503,7 +503,7 @@ func advanceToSetupPreview(t *testing.T) Model {
 	t.Helper()
 	m := advanceToSetupConfig(t)
 	// Navigate to the last field (Hyvä toggle) and press Enter to submit the form.
-	totalFields := len(m.setupInputs) + 2 // +2 for sample data + hyvä toggles
+	totalFields := len(m.setupInputs) + toggleCount
 	for i := 0; i < totalFields-1; i++ {
 		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
 	}
@@ -636,7 +636,7 @@ func advanceToInstalling(t *testing.T, steps []detector.Step) Model {
 		t.Fatalf("expected phaseSetupConfig, got %d", m.phase)
 	}
 	// Navigate to last field and submit form
-	totalFields := len(m.setupInputs) + 2 // +2 for sample data + hyvä toggles
+	totalFields := len(m.setupInputs) + toggleCount
 	for i := 0; i < totalFields-1; i++ {
 		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
 	}
@@ -1082,7 +1082,7 @@ func submitSetupForm(t *testing.T, password string) Model {
 	t.Helper()
 	m := advanceToSetupConfig(t)
 	m.setupInputs[adminPasswordField].SetValue(password)
-	totalFields := len(m.setupInputs) + 2 // +2 for sample data + hyvä toggles
+	totalFields := len(m.setupInputs) + toggleCount
 	for i := 0; i < totalFields-1; i++ {
 		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
 	}
@@ -1197,5 +1197,82 @@ func TestSudoRefreshCommand_ExplainsItselfAtThePrompt(t *testing.T) {
 	}
 	if !contains(args[3], "/etc/hosts") {
 		t.Errorf("prompt was %q, expected it to say what sudo is for", args[3])
+	}
+}
+
+// --- git repository toggle ---
+
+// navigateToGitToggle tabs from the first admin field to the Git toggle.
+func navigateToGitToggle(m Model) Model {
+	for i := 0; i < len(setupFieldDefs)+1; i++ {
+		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
+	}
+	return m
+}
+
+// TestGit_DefaultIsOn verifies a fresh project gets a repository unless the
+// user says otherwise, which is what issue #1 asks for.
+func TestGit_DefaultIsOn(t *testing.T) {
+	if !advanceToSetupConfig(t).initGit {
+		t.Error("initGit should be true by default")
+	}
+}
+
+// TestGit_ToggledBySpace verifies the user can decline a repository.
+func TestGit_ToggledBySpace(t *testing.T) {
+	m := navigateToGitToggle(advanceToSetupConfig(t))
+
+	if !m.inTogglePhase || m.toggleFocus != initGitToggle {
+		t.Fatalf("expected focus on the Git toggle; inTogglePhase=%v toggleFocus=%d", m.inTogglePhase, m.toggleFocus)
+	}
+
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	if m.initGit {
+		t.Error("space should disable initGit")
+	}
+
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	if !m.initGit {
+		t.Error("space should enable initGit again")
+	}
+}
+
+// TestGit_TogglingDoesNotTouchTheOtherOptions verifies the toggles stay apart.
+func TestGit_TogglingDoesNotTouchTheOtherOptions(t *testing.T) {
+	m := navigateToGitToggle(advanceToSetupConfig(t))
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+
+	if m.installSampleData || m.installHyva {
+		t.Errorf("only the Git toggle should change; sampleData=%v hyva=%v", m.installSampleData, m.installHyva)
+	}
+}
+
+// TestSetupConfig_ExplainsTheGitOption verifies the form says what it does.
+func TestSetupConfig_ExplainsTheGitOption(t *testing.T) {
+	view := advanceToSetupConfig(t).View()
+
+	for _, want := range []string{"Initialize Git", "git init", ".gitignore"} {
+		if !contains(view, want) {
+			t.Errorf("setup form should explain the Git option, missing %q", want)
+		}
+	}
+}
+
+// TestGit_ChoiceReachesTheInstaller verifies the toggle ends up in the config
+// the detector is handed.
+func TestGit_ChoiceReachesTheInstaller(t *testing.T) {
+	m := submitSetupForm(t, "Wachtwoord123")
+	if !m.installCfg.InitGit {
+		t.Error("InitGit should be carried into the install config")
+	}
+
+	m = navigateToGitToggle(advanceToSetupConfig(t))
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	for i := 0; i < toggleCount-1; i++ {
+		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
+	}
+	m = pressEnter(m)
+	if m.installCfg.InitGit {
+		t.Error("declining Git should be carried into the install config")
 	}
 }
