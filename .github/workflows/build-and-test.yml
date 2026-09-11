@@ -149,6 +149,11 @@ jobs:
           send "\t"
           sleep 0.3
 
+          # Git toggle (on by default: git init is skipped inside this checkout,
+          # so the step only writes a .gitignore)
+          send "\t"
+          sleep 0.3
+
           # Hyvä toggle
           if { $hyva eq "true" } {
             puts ">>> Enabling Hyvä theme..."
@@ -373,6 +378,11 @@ jobs:
             puts ">>> Enabling sample data..."
             send " "
           }
+          send "\t"
+          sleep 0.3
+
+          # Git toggle (on by default: git init is skipped inside this checkout,
+          # so the step only writes a .gitignore)
           send "\t"
           sleep 0.3
 

@@ -51,6 +51,9 @@ func (d *WardenDetector) buildSteps(config *Config) {
 			Step{Name: "Enable Hyvä modules"},
 		)
 	}
+	if config != nil && config.InitGit {
+		d.steps = append(d.steps, Step{Name: "Initialize Git repository"})
+	}
 	d.steps = append(d.steps, Step{Name: "Verify installation"})
 }
 
@@ -286,6 +289,12 @@ func (d *WardenDetector) Install(config *Config) error {
 			}
 			return run("warden", "env", "exec", "php-fpm",
 				"bin/magento", "cache:flush")
+		})
+	}
+
+	if config.InitGit {
+		allSteps = append(allSteps, func() error {
+			return initGitRepository(config)
 		})
 	}
 
