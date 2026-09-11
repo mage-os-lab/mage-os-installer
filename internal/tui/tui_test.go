@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mage-os/mage-os-install/internal/detector"
+	"github.com/mage-os/mage-os-install/internal/magento"
 )
 
 // mockDetector satisfies the detector.Detector interface for tests.
@@ -833,31 +835,28 @@ func TestInstall_StepDoneMsgSetsDone(t *testing.T) {
 
 // --- resume from failed step (US-008) ---
 
-// TestResume_FailureShowsLast10LogLines verifies that on failure, the error screen
-// shows the last 10 log lines (AC1).
-func TestResume_FailureShowsLast10LogLines(t *testing.T) {
+// TestResume_FailureShowsTheLastLinesOfOutput verifies that on failure, the
+// error screen shows the tail of the installer output (AC1).
+func TestResume_FailureShowsTheLastLinesOfOutput(t *testing.T) {
 	m := New()
 	m.phase = phaseInstallDone
 	m.installErr = fmt.Errorf("step failed")
-	// Add 15 log lines; only the last 10 should be shown.
-	for i := 0; i < 15; i++ {
+	// Add more lines than fit; only the last maxErrorLines should be shown.
+	for i := 0; i < maxErrorLines+3; i++ {
 		m.logLines = append(m.logLines, fmt.Sprintf("log-line-%02d", i))
 	}
 	view := m.View()
-	if !contains(view, "Last output:") {
-		t.Error("error screen should contain 'Last output:' header")
+	if !contains(view, "What went wrong:") {
+		t.Error("error screen should contain the 'What went wrong:' header")
 	}
-	// Line 05 is the 10th from the end (index 5 of 15); should appear.
-	if !contains(view, "log-line-05") {
-		t.Error("error screen should show log-line-05 (10th from end)")
+	if !contains(view, "log-line-03") {
+		t.Errorf("error screen should show log-line-03 (%d lines from the end)", maxErrorLines)
 	}
-	// Line 14 is the last; should appear.
-	if !contains(view, "log-line-14") {
-		t.Error("error screen should show log-line-14 (last line)")
+	if !contains(view, fmt.Sprintf("log-line-%02d", maxErrorLines+2)) {
+		t.Error("error screen should show the last line")
 	}
-	// Line 04 is beyond the 10-line window; should NOT appear.
-	if contains(view, "log-line-04") {
-		t.Error("error screen should NOT show log-line-04 (beyond last 10 lines)")
+	if contains(view, "log-line-02") {
+		t.Errorf("error screen should not show log-line-02 (beyond the last %d lines)", maxErrorLines)
 	}
 }
 
@@ -1074,4 +1073,129 @@ func contains(s, substr string) bool {
 			}
 			return false
 		}())
+}
+
+// --- admin password validation ---
+
+// submitSetupForm fills in the admin password and submits the setup form.
+func submitSetupForm(t *testing.T, password string) Model {
+	t.Helper()
+	m := advanceToSetupConfig(t)
+	m.setupInputs[adminPasswordField].SetValue(password)
+	totalFields := len(m.setupInputs) + 2 // +2 for sample data + hyvä toggles
+	for i := 0; i < totalFields-1; i++ {
+		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
+	}
+	return pressEnter(m)
+}
+
+// TestSetupConfig_RejectsAPasswordMageOSWouldReject verifies a password that
+// breaks the PCI 4 rules keeps the user on the form with an explanation.
+func TestSetupConfig_RejectsAPasswordMageOSWouldReject(t *testing.T) {
+	m := submitSetupForm(t, "wachtwoord")
+
+	if m.phase != phaseSetupConfig {
+		t.Fatalf("expected to stay in phaseSetupConfig, got %d", m.phase)
+	}
+	if !contains(m.setupError, "at least 12 characters") {
+		t.Errorf("setupError = %q, expected it to explain the length rule", m.setupError)
+	}
+	if !contains(m.setupError, "numeric and alphabetic") {
+		t.Errorf("setupError = %q, expected it to explain the character rule", m.setupError)
+	}
+}
+
+// TestSetupConfig_FocusesThePasswordFieldAfterRejecting verifies the user can
+// fix the password without navigating back to it.
+func TestSetupConfig_FocusesThePasswordFieldAfterRejecting(t *testing.T) {
+	m := submitSetupForm(t, "wachtwoord")
+
+	if m.setupFocus != adminPasswordField {
+		t.Errorf("setupFocus = %d, expected the password field (%d)", m.setupFocus, adminPasswordField)
+	}
+}
+
+// TestSetupConfig_AcceptsAPasswordThatMeetsTheRules verifies a valid password
+// moves on to the command preview.
+func TestSetupConfig_AcceptsAPasswordThatMeetsTheRules(t *testing.T) {
+	m := submitSetupForm(t, "Wachtwoord123")
+
+	if m.phase != phaseSetupPreview {
+		t.Fatalf("expected phaseSetupPreview, got %d (error: %q)", m.phase, m.setupError)
+	}
+}
+
+// TestSetupConfig_AcceptsAPasswordWithShellCharacters verifies the form does
+// not reject characters that raw exec now passes through safely.
+func TestSetupConfig_AcceptsAPasswordWithShellCharacters(t *testing.T) {
+	m := submitSetupForm(t, "Se$cret`12 34")
+
+	if m.phase != phaseSetupPreview {
+		t.Fatalf("expected phaseSetupPreview, got %d (error: %q)", m.phase, m.setupError)
+	}
+}
+
+// TestSetupConfig_DefaultPasswordMeetsTheRules guards against a default that
+// the installer itself would reject.
+func TestSetupConfig_DefaultPasswordMeetsTheRules(t *testing.T) {
+	if err := magento.ValidateAdminPassword(setupFieldDefaults[adminPasswordField]); err != nil {
+		t.Errorf("default admin password is invalid: %v", err)
+	}
+}
+
+// TestSetupConfig_ShowsThePasswordRules verifies the rules are on screen
+// before the user types a password.
+func TestSetupConfig_ShowsThePasswordRules(t *testing.T) {
+	view := advanceToSetupConfig(t).View()
+
+	if !contains(view, magento.AdminPasswordHint()) {
+		t.Error("setup form should show the admin password rules")
+	}
+}
+
+// --- sudo prompt warning ---
+
+// TestPreview_WarnsAboutTheSudoPrompt verifies the password prompt that
+// follows Enter is announced while the user can still read the screen.
+func TestPreview_WarnsAboutTheSudoPrompt(t *testing.T) {
+	view := advanceToSetupPreview(t).View()
+
+	for _, want := range []string{"computer login password", "sudo", "/etc/hosts"} {
+		if !contains(view, want) {
+			t.Errorf("preview should explain the sudo prompt, missing %q", want)
+		}
+	}
+}
+
+// TestPreview_SeparatesTheSudoPromptFromTheAdminPassword verifies the warning
+// says which password is being asked for.
+func TestPreview_SeparatesTheSudoPromptFromTheAdminPassword(t *testing.T) {
+	view := advanceToSetupPreview(t).View()
+
+	if !contains(view, "not the Mage-OS admin password") {
+		t.Error("preview should say the prompt is not for the Mage-OS admin password")
+	}
+}
+
+// TestPreview_NamesTheEnvironmentThatNeedsSudo verifies the warning points at
+// the environment doing the asking.
+func TestPreview_NamesTheEnvironmentThatNeedsSudo(t *testing.T) {
+	lines := sudoWarningLines("Warden")
+
+	if !contains(strings.Join(lines, " "), "Warden needs sudo") {
+		t.Errorf("got %q, expected the environment name in the warning", lines)
+	}
+}
+
+// TestSudoRefreshCommand_ExplainsItselfAtThePrompt verifies sudo asks with a
+// reason instead of a bare "Password:".
+func TestSudoRefreshCommand_ExplainsItselfAtThePrompt(t *testing.T) {
+	args := sudoRefreshCommand().Args
+
+	if strings.Join(args[:3], " ") != "sudo -v -p" {
+		t.Fatalf("got %q, expected sudo -v with a prompt", args)
+	}
+	if !contains(args[3], "/etc/hosts") {
+		t.Errorf("prompt was %q, expected it to say what sudo is for", args[3])
+	}
 }

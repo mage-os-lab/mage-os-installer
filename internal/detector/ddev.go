@@ -65,7 +65,7 @@ func (d *DdevDetector) buildSteps(config *Config) {
 }
 
 func (d *DdevDetector) SetupCommandPrefix() string {
-	return "ddev exec bin/magento setup:install"
+	return "ddev exec --raw -- bin/magento setup:install"
 }
 
 func (d *DdevDetector) BaseURL(projectName string) string {
@@ -140,17 +140,14 @@ func (d *DdevDetector) Install(config *Config) error {
 		{"ddev", "start"},
 		{"ddev", "rabbitmq", "apply"},
 		// 7: composer create-project — handled via runComposerCreateProject
-		{
-			"ddev", "exec", "composer", "create-project",
+		ddevExecCommand(
+			"composer", "create-project",
 			"--repository-url=https://repo.mage-os.org/",
 			"mage-os/project-community-edition",
 			"/tmp/mage-os-project",
-		},
-		{
-			"ddev", "exec", "bash", "-c",
-			"cp -a /tmp/mage-os-project/. /var/www/html/",
-		},
-		{"ddev", "exec", "mkdir", "-p", "/var/www/html/var/composer_home/"},
+		),
+		ddevExecCommand("bash", "-c", "cp -a /tmp/mage-os-project/. /var/www/html/"),
+		ddevExecCommand("mkdir", "-p", "/var/www/html/var/composer_home/"),
 	}
 
 	for i, args := range steps {
@@ -190,8 +187,11 @@ func (d *DdevDetector) Install(config *Config) error {
 	magentoIdx := len(steps) + 1
 	if magentoIdx >= config.StartFromStep {
 		stepStart(config, magentoIdx)
-		logf(config, "▸ ddev exec bin/magento setup:install")
-		setupArgs := []string{"exec", "bin/magento", "setup:install"}
+		if err := clearStaleInstallArtifacts(config); err != nil {
+			return err
+		}
+		logf(config, "▸ %s", strings.Join(ddevExecCommand("bin/magento", "setup:install"), " "))
+		setupArgs := ddevExecArgs("bin/magento", "setup:install")
 		for _, f := range d.SetupInstallFlags(config) {
 			setupArgs = append(setupArgs, f.Flag+"="+f.Value)
 		}
@@ -208,19 +208,16 @@ func (d *DdevDetector) Install(config *Config) error {
 		if sampleDataIdx >= config.StartFromStep {
 			stepStart(config, sampleDataIdx)
 			logf(config, "▸ Deploying sample data")
-			if err := runInDir(config.Directory, config.Log,
-				"ddev", "exec", "bin/magento", "sampledata:deploy"); err != nil {
+			if err := runDdevExec(config, "bin/magento", "sampledata:deploy"); err != nil {
 				return fmt.Errorf("sampledata:deploy failed: %w", err)
 			}
 			// If no Hyvä, run setup:upgrade + cache:flush now.
 			// If Hyvä is also enabled, setup:upgrade runs in the Hyvä enable step.
 			if !config.InstallHyva {
-				if err := runInDir(config.Directory, config.Log,
-					"ddev", "exec", "bin/magento", "setup:upgrade"); err != nil {
+				if err := runDdevExec(config, "bin/magento", "setup:upgrade"); err != nil {
 					return fmt.Errorf("setup:upgrade failed: %w", err)
 				}
-				if err := runInDir(config.Directory, config.Log,
-					"ddev", "exec", "bin/magento", "cache:flush"); err != nil {
+				if err := runDdevExec(config, "bin/magento", "cache:flush"); err != nil {
 					return fmt.Errorf("cache:flush failed: %w", err)
 				}
 			}
@@ -234,13 +231,13 @@ func (d *DdevDetector) Install(config *Config) error {
 		if hyvaRepoIdx >= config.StartFromStep {
 			stepStart(config, hyvaRepoIdx)
 			logf(config, "▸ Configuring Hyvä Private Packagist repository")
-			if err := runInDir(config.Directory, config.Log,
-				"ddev", "exec", "composer", "config", "repositories.private-packagist",
+			if err := runDdevExec(config,
+				"composer", "config", "repositories.private-packagist",
 				"composer", config.HyvaRepoURL); err != nil {
 				return fmt.Errorf("configure Hyvä repository failed: %w", err)
 			}
-			if err := runInDir(config.Directory, config.Log,
-				"ddev", "exec", "composer", "config", "--auth",
+			if err := runDdevExec(config,
+				"composer", "config", "--auth",
 				"http-basic."+extractHost(config.HyvaRepoURL),
 				"token", config.HyvaAuthToken); err != nil {
 				return fmt.Errorf("configure Hyvä auth failed: %w", err)
@@ -253,8 +250,7 @@ func (d *DdevDetector) Install(config *Config) error {
 		if hyvaInstallIdx >= config.StartFromStep {
 			stepStart(config, hyvaInstallIdx)
 			logf(config, "▸ Installing Hyvä theme")
-			if err := runInDir(config.Directory, config.Log,
-				"ddev", "exec", "composer", "require", "hyva-themes/magento2-default-theme"); err != nil {
+			if err := runDdevExec(config, "composer", "require", "hyva-themes/magento2-default-theme"); err != nil {
 				return fmt.Errorf("install Hyvä theme failed: %w", err)
 			}
 			stepDone(config, hyvaInstallIdx)
@@ -265,12 +261,10 @@ func (d *DdevDetector) Install(config *Config) error {
 		if hyvaEnableIdx >= config.StartFromStep {
 			stepStart(config, hyvaEnableIdx)
 			logf(config, "▸ Enabling Hyvä modules and setting up theme")
-			if err := runInDir(config.Directory, config.Log,
-				"ddev", "exec", "bin/magento", "module:enable", "--all"); err != nil {
+			if err := runDdevExec(config, "bin/magento", "module:enable", "--all"); err != nil {
 				return fmt.Errorf("enable Hyvä modules failed: %w", err)
 			}
-			if err := runInDir(config.Directory, config.Log,
-				"ddev", "exec", "bin/magento", "setup:upgrade"); err != nil {
+			if err := runDdevExec(config, "bin/magento", "setup:upgrade"); err != nil {
 				return fmt.Errorf("setup:upgrade failed: %w", err)
 			}
 			// Look up the Hyvä theme ID and set it as default
@@ -280,12 +274,10 @@ func (d *DdevDetector) Install(config *Config) error {
 				return fmt.Errorf("could not find Hyvä theme ID: %w", err)
 			}
 			logf(config, "▸ Hyvä theme ID: %s", themeID)
-			if err := runInDir(config.Directory, config.Log,
-				"ddev", "exec", "bin/magento", "config:set", "design/theme/theme_id", themeID); err != nil {
+			if err := runDdevExec(config, "bin/magento", "config:set", "design/theme/theme_id", themeID); err != nil {
 				return fmt.Errorf("set Hyvä theme failed: %w", err)
 			}
-			if err := runInDir(config.Directory, config.Log,
-				"ddev", "exec", "bin/magento", "cache:flush"); err != nil {
+			if err := runDdevExec(config, "bin/magento", "cache:flush"); err != nil {
 				return fmt.Errorf("cache:flush failed: %w", err)
 			}
 			stepDone(config, hyvaEnableIdx)
@@ -370,6 +362,26 @@ func stepDone(config *Config, index int) {
 	if config.OnStepDone != nil {
 		config.OnStepDone(index)
 	}
+}
+
+// ddevExecArgs prefixes a container command with DDEV's raw exec.
+// Without --raw, DDEV wraps every argument in double quotes and hands the
+// result to Bash inside the container, which then expands $variables and
+// backticks. An admin password such as Se$cret would reach bin/magento as
+// Se, or abort the install with "unbound variable". Raw exec passes the
+// arguments through untouched, so any password survives verbatim.
+func ddevExecArgs(args ...string) []string {
+	return append([]string{"exec", "--raw", "--"}, args...)
+}
+
+// ddevExecCommand returns the full command line, ddev binary included.
+func ddevExecCommand(args ...string) []string {
+	return append([]string{"ddev"}, ddevExecArgs(args...)...)
+}
+
+// runDdevExec runs a command inside the DDEV web container.
+func runDdevExec(config *Config, args ...string) error {
+	return runInDir(config.Directory, config.Log, "ddev", ddevExecArgs(args...)...)
 }
 
 // runInDir runs a command in dir, streaming each output line to logFn.

@@ -174,6 +174,9 @@ func (d *WardenDetector) Install(config *Config) error {
 		},
 		// 7: Install Mage-OS
 		func() error {
+			if err := clearStaleInstallArtifacts(config); err != nil {
+				return err
+			}
 			logf(config, "▸ bin/magento setup:install")
 			args := []string{"env", "exec", "php-fpm", "bin/magento", "setup:install"}
 			for _, f := range d.SetupInstallFlags(config) {
