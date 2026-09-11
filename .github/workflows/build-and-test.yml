@@ -125,7 +125,7 @@ jobs:
           # Admin user (default: admin)
           send "\r"
           sleep 0.3
-          # Admin password (default: Admin123!)
+          # Admin password (default: Admin123!Mage)
           send "\r"
           sleep 0.3
           # Admin email (default: admin@example.com)
@@ -352,7 +352,7 @@ jobs:
           # Admin user (default: admin)
           send "\r"
           sleep 0.3
-          # Admin password (default: Admin123!)
+          # Admin password (default: Admin123!Mage)
           send "\r"
           sleep 0.3
           # Admin email (default: admin@example.com)

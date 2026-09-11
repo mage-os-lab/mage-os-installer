@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mage-os/mage-os-install/internal/detector"
+	"github.com/mage-os/mage-os-install/internal/magento"
 )
 
 type phase int
@@ -185,7 +186,16 @@ var setupFieldDefs = []struct {
 	{label: "Admin lastname", echo: textinput.EchoNormal},
 }
 
-var setupFieldDefaults = []string{"admin", "Admin123!", "admin@example.com", "Admin", "User"}
+// Positions of the fields in setupFieldDefs, setupFieldDefaults and setupInputs.
+const (
+	adminUserField = iota
+	adminPasswordField
+	adminEmailField
+	adminFirstnameField
+	adminLastnameField
+)
+
+var setupFieldDefaults = []string{"admin", "Admin123!Mage", "admin@example.com", "Admin", "User"}
 
 // hyvaFieldDefs defines the Hyvä credential fields.
 var hyvaFieldDefs = []struct {
@@ -274,16 +284,46 @@ func (m *Model) focusAbsolutePos(pos int) {
 	}
 }
 
+// sudoPrompt replaces sudo's bare "Password:" so the request has a reason
+// attached. Percent signs are sudo escapes, so the text avoids them.
+const sudoPrompt = "Your computer login password (sudo) is needed to update /etc/hosts: "
+
+// sudoRefreshCommand caches sudo credentials before the install starts, so
+// steps like "ddev start" (which edits /etc/hosts) do not stop halfway to ask.
+func sudoRefreshCommand() *exec.Cmd {
+	return exec.Command("sudo", "-v", "-p", sudoPrompt)
+}
+
+// sudoWarningLines tell the user about that prompt while they can still read
+// the screen, and separate it from the Mage-OS admin password they just chose.
+func sudoWarningLines(envName string) []string {
+	return []string{
+		fmt.Sprintf("⚠ Enter may ask for your computer login password: %s needs sudo to", envName),
+		"  add the project hostname to /etc/hosts. This is not the Mage-OS admin password.",
+	}
+}
+
+// errorLineWidth is how much room a line has inside the bordered box:
+// the window minus its border and padding.
+func (m *Model) errorLineWidth() int {
+	const boxChrome = 6 // border (2) + padding (4)
+	width := m.windowWidth - boxChrome
+	if width < 40 {
+		width = 40
+	}
+	return width
+}
+
 // buildInstallConfig builds a Config from the current form and input values.
 func (m *Model) buildInstallConfig() detector.Config {
 	cfg := detector.Config{
 		ProjectName:       m.nameInput.Value(),
 		Directory:         m.dirInput.Value(),
-		AdminUser:         m.setupInputs[0].Value(),
-		AdminPassword:     m.setupInputs[1].Value(),
-		AdminEmail:        m.setupInputs[2].Value(),
-		AdminFirstname:    m.setupInputs[3].Value(),
-		AdminLastname:     m.setupInputs[4].Value(),
+		AdminUser:         m.setupInputs[adminUserField].Value(),
+		AdminPassword:     m.setupInputs[adminPasswordField].Value(),
+		AdminEmail:        m.setupInputs[adminEmailField].Value(),
+		AdminFirstname:    m.setupInputs[adminFirstnameField].Value(),
+		AdminLastname:     m.setupInputs[adminLastnameField].Value(),
 		InstallSampleData: m.installSampleData,
 		InstallHyva:       m.installHyva,
 	}
@@ -534,6 +574,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							return m, textinput.Blink
 						}
 					}
+					// Reject an admin password Mage-OS would reject too, while
+					// the user can still fix it.
+					if err := magento.ValidateAdminPassword(m.setupInputs[adminPasswordField].Value()); err != nil {
+						m.setupError = err.Error()
+						m.focusAbsolutePos(adminPasswordField)
+						return m, textinput.Blink
+					}
 					// Validate Hyva fields if enabled
 					if m.installHyva {
 						for i, f := range hyvaFieldDefs {
@@ -611,11 +658,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			case "enter":
 				m.initInstallSteps()
-				// Cache sudo credentials before starting the install so that
-				// commands like "ddev start" (which modifies /etc/hosts) can
-				// use sudo without prompting inside the TUI.
-				c := exec.Command("sudo", "-v")
-				return m, tea.ExecProcess(c, func(err error) tea.Msg {
+				return m, tea.ExecProcess(sudoRefreshCommand(), func(err error) tea.Msg {
 					return sudoCachedMsg{err: err}
 				})
 			case "b", "esc", "backspace":
@@ -722,6 +765,11 @@ func (m Model) View() string {
 			b.WriteString(fmt.Sprintf("  %-*s  ", labelWidth, f.label))
 			b.WriteString(m.setupInputs[i].View())
 			b.WriteString("\n")
+			if i == adminPasswordField {
+				b.WriteString(dimStyle.Render(fmt.Sprintf("  %-*s  %s",
+					labelWidth, "", magento.AdminPasswordHint())))
+				b.WriteString("\n")
+			}
 		}
 		b.WriteString("\n")
 		// Sample data toggle
@@ -810,6 +858,11 @@ func (m Model) View() string {
 			b.WriteString(line + "\n")
 		}
 		b.WriteString("\n")
+		for _, line := range sudoWarningLines(m.selected.Env.Name) {
+			b.WriteString(highlightStyle.Render(line))
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
 		b.WriteString(dimStyle.Render("↑/↓ to scroll · Enter to run · Backspace to go back"))
 
 	case phaseInstalling:
@@ -877,20 +930,16 @@ func (m Model) View() string {
 
 	case phaseInstallDone:
 		if m.installErr != nil {
+			width := m.errorLineWidth()
 			lines := []string{
 				errorStyle.Render("✗ Installation failed!"),
 				"",
-				m.installErr.Error(),
+				truncateLine(m.installErr.Error(), width),
 			}
-			if len(m.logLines) > 0 {
-				const maxLines = 10
-				start := len(m.logLines) - maxLines
-				if start < 0 {
-					start = 0
-				}
-				lines = append(lines, "", dimStyle.Render("Last output:"))
-				for _, line := range m.logLines[start:] {
-					lines = append(lines, dimStyle.Render(line))
+			if summary := installErrorSummary(m.logLines); len(summary) > 0 {
+				lines = append(lines, "", dimStyle.Render("What went wrong:"))
+				for _, line := range summary {
+					lines = append(lines, truncateLine(line, width))
 				}
 			}
 			lines = append(lines, "", dimStyle.Render("Press r to retry, enter/q to exit."))

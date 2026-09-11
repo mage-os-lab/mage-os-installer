@@ -600,3 +600,55 @@ func assertFlags(t *testing.T, flags []SetupFlag, wantFlags map[string]string, c
 		}
 	}
 }
+
+// --- raw exec (shell-proof argument passing) ---
+
+// TestDdevExecArgs_UsesRawExec verifies container commands bypass the Bash
+// wrapper DDEV would otherwise put around them.
+func TestDdevExecArgs_UsesRawExec(t *testing.T) {
+	args := ddevExecArgs("bin/magento", "cache:flush")
+
+	want := []string{"exec", "--raw", "--", "bin/magento", "cache:flush"}
+	if len(args) != len(want) {
+		t.Fatalf("ddevExecArgs() = %q, want %q", args, want)
+	}
+	for i := range want {
+		if args[i] != want[i] {
+			t.Errorf("ddevExecArgs()[%d] = %q, want %q", i, args[i], want[i])
+		}
+	}
+}
+
+// TestDdevExecCommand_StartsWithTheDdevBinary verifies the full command line
+// is runnable as-is.
+func TestDdevExecCommand_StartsWithTheDdevBinary(t *testing.T) {
+	cmd := ddevExecCommand("mkdir", "-p", "/var/www/html/var")
+
+	if cmd[0] != "ddev" {
+		t.Errorf("ddevExecCommand()[0] = %q, want %q", cmd[0], "ddev")
+	}
+	if strings.Join(cmd[1:], " ") != "exec --raw -- mkdir -p /var/www/html/var" {
+		t.Errorf("ddevExecCommand() = %q, want the raw exec form", cmd)
+	}
+}
+
+// TestDdevSetupCommandPrefix_MatchesTheCommandThatRuns verifies the preview
+// screen shows the same raw exec the installer executes.
+func TestDdevSetupCommandPrefix_MatchesTheCommandThatRuns(t *testing.T) {
+	d := &DdevDetector{}
+	prefix := d.SetupCommandPrefix()
+
+	if !strings.HasPrefix(prefix, strings.Join(ddevExecCommand("bin/magento", "setup:install"), " ")) {
+		t.Errorf("SetupCommandPrefix() = %q, want it to match ddevExecCommand()", prefix)
+	}
+}
+
+// TestDdevSetupInstallFlags_KeepsSpecialCharactersInThePassword verifies the
+// password is handed over untouched; raw exec is what keeps it that way.
+func TestDdevSetupInstallFlags_KeepsSpecialCharactersInThePassword(t *testing.T) {
+	password := "Se$cr\"et`12 34\\!"
+	d := &DdevDetector{}
+	flags := d.SetupInstallFlags(&Config{ProjectName: "test-project", AdminPassword: password})
+
+	assertFlags(t, flags, map[string]string{"--admin-password": password}, "special characters")
+}
