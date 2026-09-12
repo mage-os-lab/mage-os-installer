@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mage-os/mage-os-install/internal/detector"
@@ -1314,6 +1315,43 @@ func TestSuccess_ShowsWhereTheStoreIs(t *testing.T) {
 	}
 }
 
+// --- elapsed time on the install screen ---
+
+// frozenClock makes now() return a fixed time, advanced by the test.
+func frozenClock(t *testing.T, start time.Time) func(time.Duration) {
+	t.Helper()
+	current := start
+	now = func() time.Time { return current }
+	t.Cleanup(func() { now = time.Now })
+	return func(d time.Duration) { current = current.Add(d) }
+}
+
+// installingModel is a model mid-install with three steps.
+func installingModel(t *testing.T) Model {
+	t.Helper()
+	m := advanceToSetupPreview(t)
+	m.installSteps = []installStep{{name: "Configure DDEV"}, {name: "Create Mage-OS project"}, {name: "Verify installation"}}
+	m.phase = phaseInstalling
+	m.installStart = now()
+	return m
+}
+
+func TestFormatElapsed_ReadsLikeAStopwatch(t *testing.T) {
+	cases := map[time.Duration]string{
+		0:                                "0s",
+		42 * time.Second:                 "42s",
+		time.Minute + 5*time.Second:      "1m05s",
+		12*time.Minute + 30*time.Second:  "12m30s",
+		time.Hour + 2*time.Minute:        "1h02m",
+		2*time.Hour + 45*time.Minute + 1: "2h45m",
+	}
+	for d, want := range cases {
+		if got := formatElapsed(d); got != want {
+			t.Errorf("formatElapsed(%v) = %q, want %q", d, got, want)
+		}
+	}
+}
+
 // --- non-empty install directory ---
 
 // TestDirectory_WarnsWhenItAlreadyHasContent verifies Enter on a directory
@@ -1583,5 +1621,78 @@ func TestExistingContents_NamesAFewEntries(t *testing.T) {
 	}
 	if existingContents(filepath.Join(dir, "nope")) != "" {
 		t.Error("a missing directory should describe as empty")
+	}
+}
+
+// TestInstall_RunningStepShowsHowLongItHasTaken verifies the timer on the
+// current step moves with the clock.
+func TestInstall_RunningStepShowsHowLongItHasTaken(t *testing.T) {
+	advance := frozenClock(t, time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC))
+	m := installingModel(t)
+	m = sendMsg(m, stepStartMsg{index: 1})
+
+	advance(3*time.Minute + 7*time.Second)
+
+	if !contains(m.View(), "▸ Create Mage-OS project...  3m07s") {
+		t.Errorf("running step should show its elapsed time, view was:\n%s", m.View())
+	}
+}
+
+// TestInstall_FinishedStepKeepsItsDuration verifies a completed step shows how
+// long it took and stops counting.
+func TestInstall_FinishedStepKeepsItsDuration(t *testing.T) {
+	advance := frozenClock(t, time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC))
+	m := installingModel(t)
+	m = sendMsg(m, stepStartMsg{index: 0})
+	advance(45 * time.Second)
+	m = sendMsg(m, stepDoneMsg{index: 0})
+	advance(10 * time.Minute)
+
+	if !contains(m.View(), "✓ Configure DDEV  45s") {
+		t.Errorf("finished step should keep its duration, view was:\n%s", m.View())
+	}
+}
+
+// TestInstall_HeaderShowsTotalElapsed verifies the overall counter.
+func TestInstall_HeaderShowsTotalElapsed(t *testing.T) {
+	advance := frozenClock(t, time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC))
+	m := installingModel(t)
+
+	advance(14*time.Minute + 2*time.Second)
+
+	if !contains(m.View(), "14m02s elapsed") {
+		t.Errorf("header should show total elapsed time, view was:\n%s", m.View())
+	}
+}
+
+// TestInstall_FailedStepRecordsWhenItStopped verifies a failure freezes the
+// step's clock at the moment it failed.
+func TestInstall_FailedStepRecordsWhenItStopped(t *testing.T) {
+	advance := frozenClock(t, time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC))
+	m := installingModel(t)
+	m = sendMsg(m, stepStartMsg{index: 1})
+	advance(2 * time.Minute)
+	m = sendMsg(m, installDoneMsg{err: fmt.Errorf("boom")})
+
+	if got := m.installSteps[1].elapsed(); got != 2*time.Minute {
+		t.Errorf("failed step elapsed = %v, want 2m", got)
+	}
+}
+
+// TestInstall_RetryRestartsTheClockOfTheRetriedStep verifies a step run again
+// after a failure does not carry its earlier time along.
+func TestInstall_RetryRestartsTheClockOfTheRetriedStep(t *testing.T) {
+	advance := frozenClock(t, time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC))
+	m := installingModel(t)
+	m = sendMsg(m, stepStartMsg{index: 1})
+	advance(5 * time.Minute)
+	m = sendMsg(m, installDoneMsg{err: fmt.Errorf("boom")})
+	advance(time.Minute)
+
+	m = sendMsg(m, stepStartMsg{index: 1})
+	advance(10 * time.Second)
+
+	if got := m.installSteps[1].elapsed(); got != 10*time.Second {
+		t.Errorf("retried step elapsed = %v, want 10s", got)
 	}
 }

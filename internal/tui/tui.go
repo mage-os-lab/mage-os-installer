@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -64,8 +65,10 @@ const (
 )
 
 type installStep struct {
-	name   string
-	status stepStatus
+	name       string
+	status     stepStatus
+	startedAt  time.Time
+	finishedAt time.Time
 }
 
 // Model is the main bubbletea model for the installer TUI.
@@ -89,6 +92,7 @@ type Model struct {
 	logCh         <-chan tea.Msg
 	logLines      []string
 	installSteps  []installStep
+	installStart  time.Time // when the current install run began
 	installErr    error
 	browserOpened bool
 
@@ -446,6 +450,22 @@ func (m *Model) leaveDirectoryPhase() tea.Cmd {
 	return nil
 }
 
+// stepLine renders one install step with how long it is taking, or took. The
+// spinner already redraws the screen several times a second, which is what
+// keeps the running step's timer moving.
+func (m *Model) stepLine(step installStep) string {
+	switch step.status {
+	case stepDone:
+		return successStyle.Render("  ✓ "+step.name) + dimStyle.Render("  "+formatElapsed(step.elapsed()))
+	case stepRunning:
+		return selectedItemStyle.Render("  ▸ "+step.name+"...") + dimStyle.Render("  "+formatElapsed(step.elapsed()))
+	case stepFailed:
+		return errorStyle.Render("  ✗ "+step.name) + dimStyle.Render("  "+formatElapsed(step.elapsed()))
+	default:
+		return dimStyle.Render("  • " + step.name)
+	}
+}
+
 // errorLineWidth is how much room a line has inside the bordered box:
 // the window minus its border and padding.
 func (m *Model) errorLineWidth() int {
@@ -566,6 +586,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sudoCachedMsg:
 		// sudo credentials are now cached (or failed); proceed with install.
 		m.phase = phaseInstalling
+		m.installStart = now()
 		ch, cmd := runInstall(m.selected.Detector, m.installCfg)
 		m.logCh = ch
 		return m, tea.Batch(m.spinner.Tick, cmd)
@@ -577,12 +598,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case stepStartMsg:
 		if msg.index < len(m.installSteps) {
 			m.installSteps[msg.index].status = stepRunning
+			m.installSteps[msg.index].startedAt = now()
+			m.installSteps[msg.index].finishedAt = time.Time{}
 		}
 		return m, waitForLog(m.logCh)
 
 	case stepDoneMsg:
 		if msg.index < len(m.installSteps) {
 			m.installSteps[msg.index].status = stepDone
+			m.installSteps[msg.index].finishedAt = now()
 		}
 		return m, waitForLog(m.logCh)
 
@@ -592,6 +616,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			for i := range m.installSteps {
 				if m.installSteps[i].status == stepRunning {
 					m.installSteps[i].status = stepFailed
+					m.installSteps[i].finishedAt = now()
 					break
 				}
 			}
@@ -865,6 +890,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.installErr = nil
 					m.installCfg.StartFromStep = failedIdx
 					m.phase = phaseInstalling
+					m.installStart = now()
 					ch, cmd := runInstall(m.selected.Detector, m.installCfg)
 					m.logCh = ch
 					return m, tea.Batch(m.spinner.Tick, cmd)
@@ -1036,19 +1062,11 @@ func (m Model) View() string {
 		b.WriteString(dimStyle.Render("↑/↓ to scroll · Enter to run · Backspace to go back"))
 
 	case phaseInstalling:
-		b.WriteString(fmt.Sprintf("%s Installing %s...\n", m.spinner.View(), m.selected.Env.Name))
+		b.WriteString(fmt.Sprintf("%s Installing %s... %s\n", m.spinner.View(), m.selected.Env.Name,
+			dimStyle.Render(formatElapsed(now().Sub(m.installStart))+" elapsed")))
 		b.WriteString("\n")
 		for _, step := range m.installSteps {
-			switch step.status {
-			case stepDone:
-				b.WriteString(successStyle.Render("  ✓ " + step.name))
-			case stepRunning:
-				b.WriteString(selectedItemStyle.Render("  ▸ " + step.name + "..."))
-			case stepFailed:
-				b.WriteString(errorStyle.Render("  ✗ " + step.name))
-			default:
-				b.WriteString(dimStyle.Render("  • " + step.name))
-			}
+			b.WriteString(m.stepLine(step))
 			b.WriteString("\n")
 		}
 		if len(m.logLines) > 0 {
