@@ -11,9 +11,7 @@ func TestInitGitRepository_CreatesARepositoryWithAGitignore(t *testing.T) {
 	dir := t.TempDir()
 	var lines []string
 
-	if err := initGitRepository(recordingConfig(dir, &lines)); err != nil {
-		t.Fatalf("initGitRepository() = %v, expected no error", err)
-	}
+	initGitRepository(recordingConfig(dir, &lines))
 
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
 		t.Errorf("expected a Git repository in %s: %v", dir, err)
@@ -28,9 +26,7 @@ func TestInitGitRepository_LeavesAnExistingGitignoreAlone(t *testing.T) {
 	writeArtifacts(t, dir, ".gitignore")
 	var lines []string
 
-	if err := initGitRepository(recordingConfig(dir, &lines)); err != nil {
-		t.Fatalf("initGitRepository() = %v, expected no error", err)
-	}
+	initGitRepository(recordingConfig(dir, &lines))
 
 	content, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
 	if err != nil {
@@ -44,24 +40,38 @@ func TestInitGitRepository_LeavesAnExistingGitignoreAlone(t *testing.T) {
 func TestInitGitRepository_DoesNotNestInsideAnExistingRepository(t *testing.T) {
 	parent := t.TempDir()
 	var parentLines []string
-	if err := initGitRepository(recordingConfig(parent, &parentLines)); err != nil {
-		t.Fatalf("could not prepare the outer repository: %v", err)
-	}
+	initGitRepository(recordingConfig(parent, &parentLines))
 
 	project := filepath.Join(parent, "shop")
 	if err := os.Mkdir(project, 0755); err != nil {
 		t.Fatalf("could not create %s: %v", project, err)
 	}
 	var lines []string
-	if err := initGitRepository(recordingConfig(project, &lines)); err != nil {
-		t.Fatalf("initGitRepository() = %v, expected no error", err)
-	}
+	initGitRepository(recordingConfig(project, &lines))
 
 	if _, err := os.Stat(filepath.Join(project, ".git")); err == nil {
 		t.Error("a second repository was created inside an existing one")
 	}
 	if _, err := os.Stat(filepath.Join(project, ".gitignore")); err != nil {
 		t.Errorf("expected the .gitignore to be written anyway: %v", err)
+	}
+}
+
+func TestInitGitRepository_ReportsAProblemInsteadOfFailingTheInstall(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0555); err != nil {
+		t.Fatalf("could not make %s read-only: %v", dir, err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0755) })
+
+	var lines []string
+	initGitRepository(recordingConfig(dir, &lines))
+
+	if !strings.Contains(strings.Join(lines, "\n"), "Could not write .gitignore") {
+		t.Errorf("log was %q, expected it to report the failed write", lines)
 	}
 }
 

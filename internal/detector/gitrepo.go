@@ -1,7 +1,6 @@
 package detector
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -89,27 +88,30 @@ atlassian*
 `
 
 // initGitRepository turns the project directory into a Git repository and gives
-// it a .gitignore. Neither half overwrites what is already there.
-func initGitRepository(config *Config) error {
-	if err := initGitDirectory(config); err != nil {
-		return err
-	}
-	return writeGitignore(config)
+// it a .gitignore. Neither half overwrites what is already there, and neither
+// can fail the install: the store is already standing by the time this runs,
+// and it is not worth losing over a .gitignore. Whatever goes wrong is
+// reported instead.
+func initGitRepository(config *Config) {
+	initGitDirectory(config)
+	writeGitignore(config)
 }
 
 // initGitDirectory runs git init, unless there is nothing to gain by it.
-func initGitDirectory(config *Config) error {
+func initGitDirectory(config *Config) {
 	if _, err := exec.LookPath("git"); err != nil {
 		logf(config, "⚠ Git is not installed, skipping git init")
-		return nil
+		return
 	}
 	if isInsideGitWorkTree(config.Directory) {
 		logf(config, "▸ Already inside a Git repository, skipping git init")
-		return nil
+		return
 	}
 
 	logf(config, "▸ git init")
-	return runInDir(config.Directory, config.Log, "git", "init")
+	if err := runInDir(config.Directory, config.Log, "git", "init"); err != nil {
+		logf(config, "⚠ git init failed: %v", err)
+	}
 }
 
 // isInsideGitWorkTree reports whether dir already belongs to a repository, so
@@ -122,16 +124,15 @@ func isInsideGitWorkTree(dir string) bool {
 }
 
 // writeGitignore adds the .gitignore, leaving one that already exists alone.
-func writeGitignore(config *Config) error {
+func writeGitignore(config *Config) {
 	path := filepath.Join(config.Directory, ".gitignore")
 	if _, err := os.Stat(path); err == nil {
 		logf(config, "▸ .gitignore already exists, leaving it untouched")
-		return nil
+		return
 	}
 
 	logf(config, "▸ Writing .gitignore")
 	if err := os.WriteFile(path, []byte(gitignore), 0644); err != nil {
-		return fmt.Errorf("could not write .gitignore: %w", err)
+		logf(config, "⚠ Could not write .gitignore: %v", err)
 	}
-	return nil
 }

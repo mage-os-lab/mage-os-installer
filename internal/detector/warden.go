@@ -294,7 +294,8 @@ func (d *WardenDetector) Install(config *Config) error {
 
 	if config.InitGit {
 		allSteps = append(allSteps, func() error {
-			return initGitRepository(config)
+			initGitRepository(config)
+			return nil
 		})
 	}
 
