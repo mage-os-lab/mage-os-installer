@@ -3,6 +3,8 @@ package tui
 import (
 	"regexp"
 	"strings"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 // ansiEscape matches the colour codes DDEV, Composer and Symfony write.
@@ -48,18 +50,20 @@ func stripANSI(line string) string {
 	return ansiEscape.ReplaceAllString(line, "")
 }
 
-// truncateLine shortens line to width characters, marking the cut with an
-// ellipsis, so a long line wraps the box instead of breaking it.
-func truncateLine(line string, width int) string {
+// wrapLine breaks a long line so it fits width, instead of letting it run past
+// the edge of the box. It wraps rather than cuts: the reason an install failed
+// is often at the end of the line. A width below one means the terminal size is
+// unknown, and the line is left alone.
+func wrapLine(line string, width int) string {
 	if width < 1 {
 		return line
 	}
-	runes := []rune(line)
-	if len(runes) <= width {
-		return line
+
+	// lipgloss pads every line out to the full width, which would leave
+	// trailing spaces all over the box and the CI logs.
+	wrapped := strings.Split(lipgloss.NewStyle().Width(width).Render(line), "\n")
+	for i, part := range wrapped {
+		wrapped[i] = strings.TrimRight(part, " ")
 	}
-	if width == 1 {
-		return "…"
-	}
-	return string(runes[:width-1]) + "…"
+	return strings.Join(wrapped, "\n")
 }

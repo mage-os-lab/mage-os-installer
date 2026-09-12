@@ -84,22 +84,31 @@ func TestInstallErrorSummary_ReturnsNothingForEmptyOutput(t *testing.T) {
 	}
 }
 
-func TestTruncateLine_LeavesShortLinesAlone(t *testing.T) {
-	if got := truncateLine("short", 40); got != "short" {
+func TestWrapLine_LeavesShortLinesAlone(t *testing.T) {
+	if got := wrapLine("short", 40); got != "short" {
 		t.Errorf("got %q, expected %q", got, "short")
 	}
 }
 
-func TestTruncateLine_MarksWhereALongLineWasCut(t *testing.T) {
-	got := truncateLine("abcdefghij", 5)
+func TestWrapLine_KeepsEveryWordOfALongLine(t *testing.T) {
+	message := "step \"Initialize Git repository\" failed: could not write .gitignore: permission denied"
 
-	if got != "abcd…" {
-		t.Errorf("got %q, expected %q", got, "abcd…")
+	got := wrapLine(message, 30)
+
+	if !strings.Contains(got, "\n") {
+		t.Error("expected the line to be wrapped over several lines")
+	}
+	for _, word := range strings.Fields(message) {
+		if !strings.Contains(got, word) {
+			t.Errorf("wrapped line lost %q:\n%s", word, got)
+		}
 	}
 }
 
-func TestTruncateLine_CountsCharactersNotBytes(t *testing.T) {
-	if got := truncateLine("Hyvä thema", 6); got != "Hyvä …" {
-		t.Errorf("got %q, expected %q", got, "Hyvä …")
+func TestWrapLine_LeavesTheLineAloneWhenTheWidthIsUnknown(t *testing.T) {
+	message := strings.Repeat("a", 200)
+
+	if got := wrapLine(message, 0); got != message {
+		t.Errorf("got %q, expected the line unchanged", got)
 	}
 }
