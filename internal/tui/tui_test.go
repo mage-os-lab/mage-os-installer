@@ -84,9 +84,14 @@ func toOptionsPage(m Model) Model {
 	return finishPage(finishPage(m))
 }
 
-// completeForm walks all three screens with their current values.
-func completeForm(m Model) Model {
+// toHyvaPage walks past the admin, store and options screens.
+func toHyvaPage(m Model) Model {
 	return finishPage(toOptionsPage(m))
+}
+
+// completeForm walks all four screens with their current values.
+func completeForm(m Model) Model {
+	return finishPage(toHyvaPage(m))
 }
 
 func pressEnter(m Model) Model {
@@ -465,11 +470,7 @@ func TestSampleData_ViewShowsChecked(t *testing.T) {
 // navigateToHyvaToggle tabs through all admin fields and the sample data toggle
 // to land on the Hyvä toggle.
 func navigateToHyvaToggle(m Model) Model {
-	m = toOptionsPage(m)
-	for i := 0; i < 2; i++ {
-		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
-	}
-	return m
+	return toHyvaPage(m) // the Hyvä screen opens on its toggle
 }
 
 // TestHyva_DefaultIsOff verifies that the Hyvä toggle is off by default.
@@ -503,7 +504,7 @@ func TestHyva_ToggledBySpace(t *testing.T) {
 
 // TestHyva_ViewContainsToggle verifies the setup form renders the Hyvä toggle.
 func TestHyva_ViewContainsToggle(t *testing.T) {
-	m := toOptionsPage(advanceToSetupConfig(t))
+	m := toHyvaPage(advanceToSetupConfig(t))
 	view := m.View()
 	if !contains(view, "Install Hyv") {
 		t.Error("setup config view should contain 'Install Hyvä' toggle label")
@@ -512,7 +513,7 @@ func TestHyva_ViewContainsToggle(t *testing.T) {
 
 // TestHyva_ViewShowsChecked verifies the toggle renders as [x] when Hyvä is enabled.
 func TestHyva_ViewShowsChecked(t *testing.T) {
-	m := toOptionsPage(advanceToSetupConfig(t))
+	m := toHyvaPage(advanceToSetupConfig(t))
 	m.installHyva = true
 	view := m.View()
 	if !contains(view, "[x]") {
@@ -523,7 +524,7 @@ func TestHyva_ViewShowsChecked(t *testing.T) {
 // TestHyva_CredentialFieldsHiddenByDefault verifies that Hyvä repo/token fields
 // are not shown when the toggle is off (AC2).
 func TestHyva_CredentialFieldsHiddenByDefault(t *testing.T) {
-	m := advanceToSetupConfig(t)
+	m := toHyvaPage(advanceToSetupConfig(t))
 	view := m.View()
 	if contains(view, "Repo URL") {
 		t.Error("'Repo URL' field should not appear when installHyva is false")
@@ -536,7 +537,7 @@ func TestHyva_CredentialFieldsHiddenByDefault(t *testing.T) {
 // TestHyva_CredentialFieldsAppearsWhenEnabled verifies that enabling the toggle
 // shows the Hyvä repo URL and auth token fields (AC2).
 func TestHyva_CredentialFieldsAppearsWhenEnabled(t *testing.T) {
-	m := toOptionsPage(advanceToSetupConfig(t))
+	m := toHyvaPage(advanceToSetupConfig(t))
 	m.installHyva = true
 	view := m.View()
 	if !contains(view, "Repo URL") {
@@ -2034,8 +2035,8 @@ func submitWithHyva(t *testing.T, repoURL, token string) (Model, tea.Cmd) {
 	m.installHyva = true
 	m.hyvaInputs[hyvaRepoURLField].SetValue(repoURL)
 	m.hyvaInputs[hyvaAuthTokenField].SetValue(token)
-	m = toOptionsPage(m)
-	_, last := m.pageBounds(pageOptions)
+	m = toHyvaPage(m)
+	_, last := m.pageBounds(pageHyva)
 	m.focusAbsolutePos(last)
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	return updated.(Model), cmd
@@ -2471,7 +2472,7 @@ func TestSetupScreens_StartOnTheAdminAccount(t *testing.T) {
 	m := advanceToSetupConfig(t)
 	view := m.View()
 
-	for _, want := range []string{"Admin account", "step 1 of 3", "Admin password", "Enter to continue"} {
+	for _, want := range []string{"Admin account", "step 1 of 4", "Admin password", "Enter to continue"} {
 		if !contains(view, want) {
 			t.Errorf("first screen should contain %q", want)
 		}
@@ -2497,8 +2498,8 @@ func TestSetupScreens_EnterOnTheLastFieldMovesOn(t *testing.T) {
 	if m.setupPage != pageStore || m.setupFocus != localeField {
 		t.Errorf("expected the store screen at its first field, got page %d focus %d", m.setupPage, m.setupFocus)
 	}
-	if !contains(m.View(), "step 2 of 3") {
-		t.Error("second screen should say it is step 2 of 3")
+	if !contains(m.View(), "step 2 of 4") {
+		t.Error("second screen should say it is step 2 of 4")
 	}
 }
 
@@ -2547,18 +2548,46 @@ func TestSetupScreens_EachScreenIsCheckedWhenLeft(t *testing.T) {
 	}
 }
 
-// TestSetupScreens_OptionsScreenSubmits verifies the last screen leads to the
-// preview and shows the toggles with their explanations.
-func TestSetupScreens_OptionsScreenSubmits(t *testing.T) {
+// TestSetupScreens_OptionsScreenHasSampleDataAndGit verifies the third screen
+// holds the two plain toggles and hands over to the Hyvä screen.
+func TestSetupScreens_OptionsScreenHasSampleDataAndGit(t *testing.T) {
 	m := toOptionsPage(advanceToSetupConfig(t))
 	view := m.View()
-	for _, want := range []string{"Options", "step 3 of 3", "Install sample data", "Initialize Git", "Install Hyvä", "Space to toggle", "Enter to review command"} {
+	for _, want := range []string{"Options", "step 3 of 4", "Install sample data", "Initialize Git", "Space to toggle", "Enter to continue"} {
 		if !contains(view, want) {
 			t.Errorf("options screen should contain %q", want)
 		}
 	}
+	if contains(view, "Install Hyvä") {
+		t.Error("Hyvä has its own screen and should not be on the options screen")
+	}
+
+	if m = finishPage(m); m.setupPage != pageHyva {
+		t.Errorf("expected the Hyvä screen after the options screen, got page %d", m.setupPage)
+	}
+}
+
+// TestSetupScreens_HyvaScreenSubmits verifies the last screen explains Hyvä,
+// shows its credentials only when it is on, and leads to the preview.
+func TestSetupScreens_HyvaScreenSubmits(t *testing.T) {
+	m := toHyvaPage(advanceToSetupConfig(t))
+	view := m.View()
+	for _, want := range []string{"Hyvä theme", "step 4 of 4", "Install Hyvä", "hyva.io", "Enter to review command"} {
+		if !contains(view, want) {
+			t.Errorf("Hyvä screen should contain %q", want)
+		}
+	}
+	if contains(view, "Repo URL") {
+		t.Error("credentials should stay hidden while Hyvä is off")
+	}
+
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	if !m.installHyva || !contains(m.View(), "Repo URL") {
+		t.Error("Space should switch Hyvä on and reveal its credential fields")
+	}
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
 
 	if m = finishPage(m); m.phase != phaseSetupPreview {
-		t.Errorf("expected the preview after the options screen, got phase %d", m.phase)
+		t.Errorf("expected the preview after the Hyvä screen, got phase %d", m.phase)
 	}
 }

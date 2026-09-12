@@ -276,18 +276,23 @@ type setupPage int
 const (
 	pageAdmin   setupPage = iota // the admin account
 	pageStore                    // locale, timezone, currency
-	pageOptions                  // sample data, Git, Hyvä
+	pageOptions                  // sample data, Git
+	pageHyva                     // the Hyvä theme and its credentials
 	pageCount
 )
 
+// lastPage is the screen whose Enter submits the form.
+const lastPage = pageCount - 1
+
 // pageTitles name the screens, in order.
-var pageTitles = [pageCount]string{"Admin account", "Store settings", "Options"}
+var pageTitles = [pageCount]string{"Admin account", "Store settings", "Options", "Hyvä theme"}
 
 // pageExplainers say in one line what each screen is for.
 var pageExplainers = [pageCount]string{
 	"The account you will use to log in to the Mage-OS admin.",
 	"Where and for whom the store runs, detected from this machine. Change what does not fit.",
 	"Extras for this install. Space toggles an option.",
+	"Hyvä replaces the Luma frontend. It needs a free license from hyva.io.",
 }
 
 // Positions of the fields in setupFieldDefs, setupFieldDefaults and setupInputs.
@@ -390,10 +395,15 @@ func pageOf(pos int) setupPage {
 		return pageAdmin
 	case pos <= currencyField:
 		return pageStore
-	default:
+	case pos < len(setupFieldDefs)+hyvaTogglePosition:
 		return pageOptions
+	default:
+		return pageHyva
 	}
 }
+
+// hyvaTogglePosition is where the Hyvä toggle sits among the toggles.
+const hyvaTogglePosition = hyvaToggle - sampleDataToggle
 
 // pageBounds are the first and last form positions on a screen. The options
 // screen grows by the Hyvä credential fields when Hyvä is on.
@@ -403,9 +413,12 @@ func (m *Model) pageBounds(page setupPage) (first, last int) {
 		return adminUserField, adminLastnameField
 	case pageStore:
 		return localeField, currencyField
-	default:
+	case pageOptions:
 		first = len(m.setupInputs)
-		last = first + toggleCount - 1
+		return first, first + hyvaTogglePosition - 1
+	default:
+		first = len(m.setupInputs) + hyvaTogglePosition
+		last = first
 		if m.installHyva {
 			last += len(m.hyvaInputs)
 		}
@@ -428,7 +441,7 @@ func (m *Model) currentPos() int {
 // first field that would fail.
 func (m *Model) validatePage(page setupPage) bool {
 	first, last := m.pageBounds(page)
-	if page != pageOptions {
+	if page == pageAdmin || page == pageStore {
 		for i := first; i <= last; i++ {
 			if strings.TrimSpace(m.setupInputs[i].Value()) == "" {
 				m.setupError = setupFieldDefs[i].label + " is required"
@@ -450,7 +463,7 @@ func (m *Model) validatePage(page setupPage) bool {
 			m.focusAbsolutePos(field)
 			return false
 		}
-	case pageOptions:
+	case pageHyva:
 		if m.installHyva {
 			for i, f := range hyvaFieldDefs {
 				if strings.TrimSpace(m.hyvaInputs[i].Value()) == "" {
@@ -832,6 +845,8 @@ func (m *Model) setupPageView() string {
 		}
 	case pageOptions:
 		b.WriteString(m.optionsView(labelWidth))
+	case pageHyva:
+		b.WriteString(m.hyvaView(labelWidth))
 	}
 
 	b.WriteString("\n")
@@ -848,9 +863,12 @@ func (m *Model) setupPageView() string {
 // setupPageKeys lists the keys that matter on the current screen.
 func (m *Model) setupPageKeys() string {
 	keys := []string{"Tab/↑↓ to move"}
-	if m.setupPage == pageOptions {
+	switch m.setupPage {
+	case pageHyva:
 		keys = append(keys, "Space to toggle", "Enter to review command")
-	} else {
+	case pageOptions:
+		keys = append(keys, "Space to toggle", "Enter to continue")
+	default:
 		keys = append(keys, "Enter to continue")
 	}
 	if m.setupPage == pageAdmin {
@@ -861,11 +879,43 @@ func (m *Model) setupPageKeys() string {
 	return strings.Join(append(keys, "ctrl+c to quit"), " · ")
 }
 
-// optionsView draws the three toggles with their explanations, and the Hyvä
-// credential fields under their toggle when it is on.
+// optionsView draws the sample data and Git toggles with their explanations.
 func (m *Model) optionsView(labelWidth int) string {
 	var b strings.Builder
-	toggle := func(focus int, label string, on bool, lines ...string) {
+	toggle := m.toggleLine(&b, labelWidth)
+	toggle(sampleDataToggle, "Install sample data", m.installSampleData,
+		"Demo products, categories and customers, so the store is populated from",
+		"the start. Recommended for a first install.")
+	b.WriteString("\n")
+	toggle(initGitToggle, "Initialize Git", m.initGit,
+		"Runs git init and writes a .gitignore for Mage-OS. An existing repository",
+		"or .gitignore is left alone.")
+	return b.String()
+}
+
+// hyvaView draws the Hyvä toggle with its explanation, and the credential
+// fields under it when it is on.
+func (m *Model) hyvaView(labelWidth int) string {
+	var b strings.Builder
+	toggle := m.toggleLine(&b, labelWidth)
+	toggle(hyvaToggle, "Install Hyvä", m.installHyva,
+		"A modern, fast frontend theme built on Tailwind CSS and Alpine.js.",
+		"Register at hyva.io for a repository URL and an auth token; both are",
+		"checked here before the install starts.")
+	if m.installHyva {
+		b.WriteString("\n")
+		for i, f := range hyvaFieldDefs {
+			b.WriteString(fmt.Sprintf("  %-*s  ", labelWidth, f.label))
+			b.WriteString(m.hyvaInputs[i].View())
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
+}
+
+// toggleLine returns a writer for one toggle row with its explanation lines.
+func (m *Model) toggleLine(b *strings.Builder, labelWidth int) func(focus int, label string, on bool, lines ...string) {
+	return func(focus int, label string, on bool, lines ...string) {
 		box := "[ ]"
 		if on {
 			box = "[x]"
@@ -881,25 +931,6 @@ func (m *Model) optionsView(labelWidth int) string {
 			b.WriteString("\n")
 		}
 	}
-	toggle(sampleDataToggle, "Install sample data", m.installSampleData,
-		"Demo products, categories and customers, so the store is populated from",
-		"the start. Recommended for a first install.")
-	b.WriteString("\n")
-	toggle(initGitToggle, "Initialize Git", m.initGit,
-		"Runs git init and writes a .gitignore for Mage-OS. An existing repository",
-		"or .gitignore is left alone.")
-	b.WriteString("\n")
-	toggle(hyvaToggle, "Install Hyvä", m.installHyva,
-		"A modern, fast frontend theme (Tailwind CSS, Alpine.js) replacing Luma.",
-		"⚠ Needs a free license: register at hyva.io for a repo URL and auth token.")
-	if m.installHyva {
-		for i, f := range hyvaFieldDefs {
-			b.WriteString(fmt.Sprintf("  %-*s  ", labelWidth, "    "+f.label))
-			b.WriteString(m.hyvaInputs[i].View())
-			b.WriteString("\n")
-		}
-	}
-	return b.String()
 }
 
 // errorLineWidth is how much room a line has inside the bordered box:
@@ -1358,7 +1389,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if !m.validatePage(m.setupPage) {
 					return m, textinput.Blink
 				}
-				if m.setupPage < pageOptions {
+				if m.setupPage < lastPage {
 					nextFirst, _ := m.pageBounds(m.setupPage + 1)
 					m.focusAbsolutePos(nextFirst)
 					return m, textinput.Blink
