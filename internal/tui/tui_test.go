@@ -17,6 +17,8 @@ import (
 	"github.com/mage-os/mage-os-install/internal/prereq"
 
 	"github.com/mage-os/mage-os-install/internal/resume"
+
+	"github.com/mage-os/mage-os-install/internal/options"
 )
 
 // mockDetector satisfies the detector.Detector interface for tests.
@@ -2424,5 +2426,70 @@ func TestResume_NoStateMeansNoQuestion(t *testing.T) {
 
 	if m = pressEnter(m); m.phase != phaseSetupConfig {
 		t.Errorf("expected phaseSetupConfig, got %d", m.phase)
+	}
+}
+
+// --- flags pre-fill the screens ---
+
+func givenOptions() options.Options {
+	o := options.Defaults
+	o.ProjectName = "flagged-shop"
+	o.Directory = "/srv/flagged-shop"
+	o.AdminUser = "michiel"
+	o.AdminPassword = "Wachtwoord123"
+	o.SampleData = true
+	o.InitGit = false
+	o.Hyva = true
+	o.HyvaRepoURL = "https://hyva-themes.repo.packagist.com/acme/"
+	o.HyvaAuthToken = "t0k3n"
+	return o
+}
+
+// TestOptions_PrefillTheNameAndDirectory verifies --project and --dir land in
+// the first two prompts.
+func TestOptions_PrefillTheNameAndDirectory(t *testing.T) {
+	m := NewWithOptions(givenOptions())
+	if m.nameInput.Value() != "flagged-shop" {
+		t.Errorf("name = %q", m.nameInput.Value())
+	}
+
+	m = pressEnter(m)
+
+	if m.dirInput.Value() != "/srv/flagged-shop" {
+		t.Errorf("dir = %q", m.dirInput.Value())
+	}
+}
+
+// TestOptions_PrefillTheFormAndToggles verifies the admin fields, toggles
+// and Hyvä credentials come from the flags, with screen defaults for the rest.
+func TestOptions_PrefillTheFormAndToggles(t *testing.T) {
+	m := passChecks(NewWithOptions(givenOptions()))
+	m = pressEnter(m)
+	m = sendMsg(m, detectionDoneMsg{envs: []detector.DetectedEnvironment{makeDetectedEnv("DDEV")}})
+	m = pressEnter(m)
+	if m.phase != phaseSetupConfig {
+		t.Fatalf("expected phaseSetupConfig, got %d", m.phase)
+	}
+
+	if m.setupInputs[adminUserField].Value() != "michiel" || m.setupInputs[adminPasswordField].Value() != "Wachtwoord123" {
+		t.Error("admin user and password should come from the flags")
+	}
+	if m.setupInputs[adminEmailField].Value() != options.Defaults.AdminEmail {
+		t.Error("a field without a flag should keep its default")
+	}
+	if !m.installSampleData || m.initGit || !m.installHyva {
+		t.Errorf("toggles should follow the flags: sample %v git %v hyva %v", m.installSampleData, m.initGit, m.installHyva)
+	}
+	if m.hyvaInputs[0].Value() != "https://hyva-themes.repo.packagist.com/acme/" || m.hyvaInputs[1].Value() != "t0k3n" {
+		t.Error("Hyvä credentials should come from the flags")
+	}
+}
+
+// TestOptions_NoFlagsMeansTheOldDefaults verifies New() behaves as before.
+func TestOptions_NoFlagsMeansTheOldDefaults(t *testing.T) {
+	m := advanceToSetupConfig(t)
+
+	if m.setupInputs[adminPasswordField].Value() != setupFieldDefaults[adminPasswordField] || !m.initGit || m.installSampleData {
+		t.Error("without flags the form should show its own defaults")
 	}
 }
