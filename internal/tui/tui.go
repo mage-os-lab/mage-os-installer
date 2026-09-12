@@ -21,6 +21,7 @@ type phase int
 const (
 	phaseNameInput phase = iota
 	phaseDirectoryInput
+	phaseDirectoryConfirm // the chosen directory is not empty
 	phaseDetecting
 	phaseSelection
 	phaseSetupConfig  // admin credentials form
@@ -74,6 +75,7 @@ type Model struct {
 	nameInput     textinput.Model
 	originalName  string // the default seeded into nameInput, used to compute the dir default
 	dirInput      textinput.Model
+	dirContents   string // what is already in the chosen directory, if anything
 	envs          []detector.DetectedEnvironment
 	cursor        int
 	selected      *detector.DetectedEnvironment
@@ -434,6 +436,16 @@ func (m *Model) previewMaxVisible() int {
 	return max(5, m.windowHeight-chrome)
 }
 
+// leaveDirectoryPhase moves on once the directory is settled. Detection may
+// already be done (envs cached) or still running.
+func (m *Model) leaveDirectoryPhase() tea.Cmd {
+	if m.envs != nil {
+		return m.advanceFromDetection()
+	}
+	m.phase = phaseDetecting
+	return nil
+}
+
 // errorLineWidth is how much room a line has inside the bordered box:
 // the window minus its border and padding.
 func (m *Model) errorLineWidth() int {
@@ -612,16 +624,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyMsg:
 			switch msg.String() {
 			case "enter":
-				// Detection may already be done (envs cached) or still running.
-				if m.envs != nil {
-					return m, m.advanceFromDetection()
+				// Installing over an existing directory rewrites its
+				// environment config and copies Mage-OS into it, so a
+				// directory with content gets a look before anything runs.
+				if m.dirContents = existingContents(m.dirInput.Value()); m.dirContents != "" {
+					m.phase = phaseDirectoryConfirm
+					return m, nil
 				}
-				m.phase = phaseDetecting
-				return m, nil
+				return m, m.leaveDirectoryPhase()
 			default:
 				var cmd tea.Cmd
 				m.dirInput, cmd = m.dirInput.Update(msg)
 				return m, cmd
+			}
+		}
+	}
+
+	if m.phase == phaseDirectoryConfirm {
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.String() {
+			case "y":
+				return m, m.leaveDirectoryPhase()
+			case "n", "esc", "backspace":
+				m.phase = phaseDirectoryInput
+				return m, textinput.Blink
 			}
 		}
 	}
@@ -872,6 +898,18 @@ func (m Model) View() string {
 		b.WriteString(m.dirInput.View())
 		b.WriteString("\n\n")
 		b.WriteString(dimStyle.Render("Enter to confirm, ctrl+c to quit"))
+
+	case phaseDirectoryConfirm:
+		b.WriteString("Install directory:\n\n")
+		b.WriteString(m.dirInput.View())
+		b.WriteString("\n\n")
+		b.WriteString(highlightStyle.Render("⚠ This directory is not empty: " + m.dirContents + "."))
+		b.WriteString("\n")
+		b.WriteString(highlightStyle.Render("  The installer copies Mage-OS over it, rewrites its environment config,"))
+		b.WriteString("\n")
+		b.WriteString(highlightStyle.Render("  and removes a leftover app/etc/env.php. Install here anyway?"))
+		b.WriteString("\n\n")
+		b.WriteString(dimStyle.Render("y to continue · n to choose another directory · ctrl+c to quit"))
 
 	case phaseDetecting:
 		b.WriteString(fmt.Sprintf("%s Detecting development environments...\n", m.spinner.View()))

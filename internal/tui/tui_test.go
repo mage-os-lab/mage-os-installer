@@ -50,6 +50,16 @@ func pressEnter(m Model) Model {
 	return sendMsg(m, tea.KeyMsg{Type: tea.KeyEnter})
 }
 
+// confirmDirectory presses Enter on the directory prompt and, since tests run
+// in a directory that has content, answers the resulting warning with yes.
+func confirmDirectory(m Model) Model {
+	m = pressEnter(m)
+	if m.phase == phaseDirectoryConfirm {
+		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	}
+	return m
+}
+
 // makeDetectedEnv builds a DetectedEnvironment backed by a mockDetector.
 func makeDetectedEnv(name string) detector.DetectedEnvironment {
 	return detector.DetectedEnvironment{
@@ -134,7 +144,7 @@ func TestUpdate_DetectionCachedDuringDirInput(t *testing.T) {
 func TestUpdate_EnterOnDir_NoEnvs_GoesToError(t *testing.T) {
 	m := pressEnter(New())                                                     // → dir
 	m = sendMsg(m, detectionDoneMsg{envs: []detector.DetectedEnvironment{}})   // cache: empty
-	m = pressEnter(m)                                                          // confirm dir
+	m = confirmDirectory(m)                                                          // confirm dir
 	if m.phase != phaseError {
 		t.Errorf("expected phaseError, got %d", m.phase)
 	}
@@ -143,7 +153,7 @@ func TestUpdate_EnterOnDir_NoEnvs_GoesToError(t *testing.T) {
 func TestUpdate_EnterOnDir_OneEnv_GoesToSetupConfig(t *testing.T) {
 	m := pressEnter(New())                                                                    // → dir
 	m = sendMsg(m, detectionDoneMsg{envs: []detector.DetectedEnvironment{makeDetectedEnv("DDEV")}}) // cache: one
-	m = pressEnter(m)                                                                         // confirm dir
+	m = confirmDirectory(m)                                                                         // confirm dir
 	if m.phase != phaseSetupConfig {
 		t.Errorf("expected phaseSetupConfig, got %d", m.phase)
 	}
@@ -155,7 +165,7 @@ func TestUpdate_EnterOnDir_MultipleEnvs_GoesToSelection(t *testing.T) {
 		makeDetectedEnv("DDEV"),
 		makeDetectedEnv("Warden"),
 	}})
-	m = pressEnter(m) // confirm dir
+	m = confirmDirectory(m) // confirm dir
 	if m.phase != phaseSelection {
 		t.Errorf("expected phaseSelection, got %d", m.phase)
 	}
@@ -163,7 +173,7 @@ func TestUpdate_EnterOnDir_MultipleEnvs_GoesToSelection(t *testing.T) {
 
 func TestUpdate_EnterOnDir_StillDetecting_GoesToDetecting(t *testing.T) {
 	m := pressEnter(New()) // → dir (envs still nil)
-	m = pressEnter(m)      // confirm dir without cached envs
+	m = confirmDirectory(m)      // confirm dir without cached envs
 	if m.phase != phaseDetecting {
 		t.Errorf("expected phaseDetecting, got %d", m.phase)
 	}
@@ -277,7 +287,7 @@ func advanceToSetupConfig(t *testing.T) Model {
 	t.Helper()
 	m := pressEnter(New()) // name → dir
 	m = sendMsg(m, detectionDoneMsg{envs: []detector.DetectedEnvironment{makeDetectedEnv("DDEV")}})
-	m = pressEnter(m) // dir → setup config
+	m = confirmDirectory(m) // dir → setup config
 	if m.phase != phaseSetupConfig {
 		t.Fatalf("expected phaseSetupConfig, got %d", m.phase)
 	}
@@ -633,7 +643,7 @@ func advanceToInstalling(t *testing.T, steps []detector.Step) Model {
 	m := pressEnter(New()) // name → dir
 	env := makeDetectedEnvWithSteps("DDEV", steps)
 	m = sendMsg(m, detectionDoneMsg{envs: []detector.DetectedEnvironment{env}})
-	m = pressEnter(m) // dir → setup config
+	m = confirmDirectory(m) // dir → setup config
 	if m.phase != phaseSetupConfig {
 		t.Fatalf("expected phaseSetupConfig, got %d", m.phase)
 	}
@@ -975,7 +985,7 @@ func advanceToOpenBrowser(t *testing.T) Model {
 	m := pressEnter(New()) // name → dir
 	env := makeDetectedEnv("DDEV")
 	m = sendMsg(m, detectionDoneMsg{envs: []detector.DetectedEnvironment{env}})
-	m = pressEnter(m) // dir → setup config
+	m = confirmDirectory(m) // dir → setup config
 	if m.phase != phaseSetupConfig {
 		t.Fatalf("expected phaseSetupConfig, got %d", m.phase)
 	}
@@ -1304,6 +1314,32 @@ func TestSuccess_ShowsWhereTheStoreIs(t *testing.T) {
 	}
 }
 
+// --- non-empty install directory ---
+
+// TestDirectory_WarnsWhenItAlreadyHasContent verifies Enter on a directory
+// with files in it asks before going on, and says what is in there.
+func TestDirectory_WarnsWhenItAlreadyHasContent(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"app", "vendor", "pub", "composer.json"} {
+		if err := os.MkdirAll(filepath.Join(dir, name), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := pressEnter(New())
+	m.dirInput.SetValue(dir)
+
+	m = pressEnter(m)
+
+	if m.phase != phaseDirectoryConfirm {
+		t.Fatalf("expected phaseDirectoryConfirm, got %d", m.phase)
+	}
+	for _, want := range []string{"not empty", "4 entries", "app/", "composer.json", "Install here anyway?"} {
+		if !contains(m.View(), want) {
+			t.Errorf("warning should contain %q", want)
+		}
+	}
+}
+
 // TestSuccess_ShowsTheAdminLogin verifies the credentials are shown, since the
 // password was masked on the form.
 func TestSuccess_ShowsTheAdminLogin(t *testing.T) {
@@ -1325,6 +1361,59 @@ func TestSuccess_TellsHowToRunMagentoCommands(t *testing.T) {
 	for _, want := range []string{"mock exec bin/magento <command>", m.installCfg.Directory} {
 		if !contains(view, want) {
 			t.Errorf("success screen should contain %q", want)
+		}
+	}
+}
+
+// TestDirectory_YesInstallsThere verifies confirming continues to the setup
+// form as before.
+func TestDirectory_YesInstallsThere(t *testing.T) {
+	m := pressEnter(New())
+	m = sendMsg(m, detectionDoneMsg{envs: []detector.DetectedEnvironment{makeDetectedEnv("DDEV")}})
+	m = pressEnter(m) // this test's working directory has content
+	if m.phase != phaseDirectoryConfirm {
+		t.Fatalf("expected phaseDirectoryConfirm, got %d", m.phase)
+	}
+
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+
+	if m.phase != phaseSetupConfig {
+		t.Errorf("expected phaseSetupConfig after confirming, got %d", m.phase)
+	}
+}
+
+// TestDirectory_NoGoesBackToTheInput verifies declining returns to the prompt
+// with the typed path intact.
+func TestDirectory_NoGoesBackToTheInput(t *testing.T) {
+	m := pressEnter(New())
+	m = pressEnter(m)
+	if m.phase != phaseDirectoryConfirm {
+		t.Fatalf("expected phaseDirectoryConfirm, got %d", m.phase)
+	}
+	before := m.dirInput.Value()
+
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+
+	if m.phase != phaseDirectoryInput {
+		t.Errorf("expected phaseDirectoryInput after declining, got %d", m.phase)
+	}
+	if m.dirInput.Value() != before {
+		t.Errorf("directory input changed from %q to %q", before, m.dirInput.Value())
+	}
+}
+
+// TestDirectory_EmptyOrMissingNeedsNoConfirmation verifies the common case, a
+// fresh directory, is not slowed down by a question.
+func TestDirectory_EmptyOrMissingNeedsNoConfirmation(t *testing.T) {
+	for name, dir := range map[string]string{"empty": t.TempDir(), "missing": filepath.Join(t.TempDir(), "new-shop")} {
+		m := pressEnter(New())
+		m = sendMsg(m, detectionDoneMsg{envs: []detector.DetectedEnvironment{makeDetectedEnv("DDEV")}})
+		m.dirInput.SetValue(dir)
+
+		m = pressEnter(m)
+
+		if m.phase != phaseSetupConfig {
+			t.Errorf("[%s] expected phaseSetupConfig without a warning, got %d", name, m.phase)
 		}
 	}
 }
@@ -1474,5 +1563,25 @@ func TestPreview_ScrollCoversTheStepList(t *testing.T) {
 	}
 	if !contains(m.View(), "--admin-password") {
 		t.Error("scrolling to the end should reveal the last flag")
+	}
+}
+
+// TestExistingContents_NamesAFewEntries verifies the description stays short
+// however full the directory is.
+func TestExistingContents_NamesAFewEntries(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"a", "b", "c", "d", "e"} {
+		if err := os.WriteFile(filepath.Join(dir, name), nil, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got := existingContents(dir)
+
+	if got != "5 entries, including a, b, c" {
+		t.Errorf("existingContents() = %q", got)
+	}
+	if existingContents(filepath.Join(dir, "nope")) != "" {
+		t.Error("a missing directory should describe as empty")
 	}
 }
