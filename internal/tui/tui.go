@@ -112,6 +112,7 @@ type Model struct {
 	earlierRun    *resume.State // an unfinished install found in the directory
 	resuming      bool          // the user chose to continue it
 	setupInputs   []textinput.Model
+	setupPage     setupPage // which screen of the form is showing
 	setupFocus    int
 	setupError    string
 	installCfg    detector.Config
@@ -267,6 +268,28 @@ const (
 // credential fields.
 const toggleCount = 3
 
+// setupPage is one screen of the setup form. The form used to be a single
+// screen of fourteen things; three short screens read faster and put related
+// questions together.
+type setupPage int
+
+const (
+	pageAdmin   setupPage = iota // the admin account
+	pageStore                    // locale, timezone, currency
+	pageOptions                  // sample data, Git, Hyvä
+	pageCount
+)
+
+// pageTitles name the screens, in order.
+var pageTitles = [pageCount]string{"Admin account", "Store settings", "Options"}
+
+// pageExplainers say in one line what each screen is for.
+var pageExplainers = [pageCount]string{
+	"The account you will use to log in to the Mage-OS admin.",
+	"Where and for whom the store runs, detected from this machine. Change what does not fit.",
+	"Extras for this install. Space toggles an option.",
+}
+
 // Positions of the fields in setupFieldDefs, setupFieldDefaults and setupInputs.
 const (
 	adminUserField = iota
@@ -319,6 +342,7 @@ func (m *Model) initSetupInputs() {
 		m.setupInputs[i] = ti
 	}
 	m.setupFocus = 0
+	m.setupPage = pageAdmin
 
 	// Initialize toggles and Hyvä inputs
 	m.installSampleData = m.opts.SampleData
@@ -359,9 +383,92 @@ func (m *Model) focusSetupInput(index int) {
 	m.setupFocus = index
 }
 
+// pageOf tells which screen a form position belongs to.
+func pageOf(pos int) setupPage {
+	switch {
+	case pos <= adminLastnameField:
+		return pageAdmin
+	case pos <= currencyField:
+		return pageStore
+	default:
+		return pageOptions
+	}
+}
+
+// pageBounds are the first and last form positions on a screen. The options
+// screen grows by the Hyvä credential fields when Hyvä is on.
+func (m *Model) pageBounds(page setupPage) (first, last int) {
+	switch page {
+	case pageAdmin:
+		return adminUserField, adminLastnameField
+	case pageStore:
+		return localeField, currencyField
+	default:
+		first = len(m.setupInputs)
+		last = first + toggleCount - 1
+		if m.installHyva {
+			last += len(m.hyvaInputs)
+		}
+		return first, last
+	}
+}
+
+// currentPos is the focused form position across all screens.
+func (m *Model) currentPos() int {
+	if !m.inTogglePhase {
+		return m.setupFocus
+	}
+	if m.toggleFocus < 0 {
+		return len(m.setupInputs) + (m.toggleFocus - sampleDataToggle)
+	}
+	return len(m.setupInputs) + toggleCount + m.toggleFocus
+}
+
+// validatePage checks one screen the way the install would, and focuses the
+// first field that would fail.
+func (m *Model) validatePage(page setupPage) bool {
+	first, last := m.pageBounds(page)
+	if page != pageOptions {
+		for i := first; i <= last; i++ {
+			if strings.TrimSpace(m.setupInputs[i].Value()) == "" {
+				m.setupError = setupFieldDefs[i].label + " is required"
+				m.focusAbsolutePos(i)
+				return false
+			}
+		}
+	}
+	switch page {
+	case pageAdmin:
+		if err := magento.ValidateAdminPassword(m.setupInputs[adminPasswordField].Value()); err != nil {
+			m.setupError = err.Error()
+			m.focusAbsolutePos(adminPasswordField)
+			return false
+		}
+	case pageStore:
+		if field, err := m.invalidStoreSetting(); err != nil {
+			m.setupError = err.Error()
+			m.focusAbsolutePos(field)
+			return false
+		}
+	case pageOptions:
+		if m.installHyva {
+			for i, f := range hyvaFieldDefs {
+				if strings.TrimSpace(m.hyvaInputs[i].Value()) == "" {
+					m.setupError = "Hyvä " + f.label + " is required"
+					m.focusAbsolutePos(len(m.setupInputs) + toggleCount + i)
+					return false
+				}
+			}
+		}
+	}
+	m.setupError = ""
+	return true
+}
+
 // focusAbsolutePos sets focus based on absolute position across all form fields.
 // Layout: [admin fields...] [toggles...] [hyva fields if enabled...]
 func (m *Model) focusAbsolutePos(pos int) {
+	m.setupPage = pageOf(pos)
 	// Blur everything
 	for i := range m.setupInputs {
 		m.setupInputs[i].Blur()
@@ -697,6 +804,102 @@ func (m *Model) invalidStoreSetting() (int, error) {
 		}
 	}
 	return 0, nil
+}
+
+// setupPageView draws the current screen of the form: its title with the
+// step count, a one-line explainer, its own fields, and the keys.
+func (m *Model) setupPageView() string {
+	const labelWidth = 18
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("Configure Mage-OS  ·  %s  %s\n", pageTitles[m.setupPage],
+		dimStyle.Render(fmt.Sprintf("step %d of %d", m.setupPage+1, pageCount))))
+	b.WriteString(dimStyle.Render(pageExplainers[m.setupPage]))
+	b.WriteString("\n\n")
+
+	switch m.setupPage {
+	case pageAdmin, pageStore:
+		first, last := m.pageBounds(m.setupPage)
+		for i := first; i <= last; i++ {
+			b.WriteString(fmt.Sprintf("  %-*s  ", labelWidth, setupFieldDefs[i].label))
+			b.WriteString(m.setupInputs[i].View())
+			b.WriteString("\n")
+			if i == adminPasswordField {
+				for _, hint := range m.passwordHints() {
+					b.WriteString(dimStyle.Render(fmt.Sprintf("  %-*s  %s", labelWidth, "", hint)))
+					b.WriteString("\n")
+				}
+			}
+		}
+	case pageOptions:
+		b.WriteString(m.optionsView(labelWidth))
+	}
+
+	b.WriteString("\n")
+	if m.verifyingHyva {
+		b.WriteString(fmt.Sprintf("  %s Checking the Hyvä credentials...\n\n", m.spinner.View()))
+	}
+	if m.setupError != "" {
+		b.WriteString(errorStyle.Render("  ✗ "+m.setupError) + "\n\n")
+	}
+	b.WriteString(dimStyle.Render(m.setupPageKeys()))
+	return b.String()
+}
+
+// setupPageKeys lists the keys that matter on the current screen.
+func (m *Model) setupPageKeys() string {
+	keys := []string{"Tab/↑↓ to move"}
+	if m.setupPage == pageOptions {
+		keys = append(keys, "Space to toggle", "Enter to review command")
+	} else {
+		keys = append(keys, "Enter to continue")
+	}
+	if m.setupPage == pageAdmin {
+		keys = append(keys, revealPasswordKey+" to show/hide password")
+	} else {
+		keys = append(keys, "Esc to go back")
+	}
+	return strings.Join(append(keys, "ctrl+c to quit"), " · ")
+}
+
+// optionsView draws the three toggles with their explanations, and the Hyvä
+// credential fields under their toggle when it is on.
+func (m *Model) optionsView(labelWidth int) string {
+	var b strings.Builder
+	toggle := func(focus int, label string, on bool, lines ...string) {
+		box := "[ ]"
+		if on {
+			box = "[x]"
+		}
+		style := dimStyle
+		if m.inTogglePhase && m.toggleFocus == focus {
+			style = selectedItemStyle
+		}
+		b.WriteString(style.Render(fmt.Sprintf("  %-*s  %s", labelWidth, label, box)))
+		b.WriteString("\n")
+		for _, line := range lines {
+			b.WriteString(dimStyle.Render(fmt.Sprintf("  %-*s  %s", labelWidth, "", line)))
+			b.WriteString("\n")
+		}
+	}
+	toggle(sampleDataToggle, "Install sample data", m.installSampleData,
+		"Demo products, categories and customers, so the store is populated from",
+		"the start. Recommended for a first install.")
+	b.WriteString("\n")
+	toggle(initGitToggle, "Initialize Git", m.initGit,
+		"Runs git init and writes a .gitignore for Mage-OS. An existing repository",
+		"or .gitignore is left alone.")
+	b.WriteString("\n")
+	toggle(hyvaToggle, "Install Hyvä", m.installHyva,
+		"A modern, fast frontend theme (Tailwind CSS, Alpine.js) replacing Luma.",
+		"⚠ Needs a free license: register at hyva.io for a repo URL and auth token.")
+	if m.installHyva {
+		for i, f := range hyvaFieldDefs {
+			b.WriteString(fmt.Sprintf("  %-*s  ", labelWidth, "    "+f.label))
+			b.WriteString(m.hyvaInputs[i].View())
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
 }
 
 // errorLineWidth is how much room a line has inside the bordered box:
@@ -1117,92 +1320,53 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if keyMsg, ok := msg.(tea.KeyMsg); ok {
-			// Total fields: admin fields + toggles + (hyva fields if enabled)
-			totalFields := len(m.setupInputs) + toggleCount
-			if m.installHyva {
-				totalFields += len(m.hyvaInputs)
-			}
-
-			// Calculate current absolute position
-			absPos := m.setupFocus
-			if m.inTogglePhase {
-				if m.toggleFocus < 0 {
-					absPos = len(m.setupInputs) + (m.toggleFocus - sampleDataToggle)
-				} else {
-					absPos = len(m.setupInputs) + toggleCount + m.toggleFocus
-				}
-			}
+			first, last := m.pageBounds(m.setupPage)
+			pos := m.currentPos()
 
 			switch keyMsg.String() {
 			case revealPasswordKey:
 				m.togglePasswordReveal()
 				return m, nil
 			case "tab", "down":
-				newPos := absPos + 1
-				if newPos >= totalFields {
-					newPos = 0
+				next := pos + 1
+				if next > last {
+					next = first
 				}
-				m.focusAbsolutePos(newPos)
+				m.focusAbsolutePos(next)
 				return m, textinput.Blink
 			case "shift+tab", "up":
-				newPos := absPos - 1
-				if newPos < 0 {
-					newPos = totalFields - 1
+				next := pos - 1
+				if next < first {
+					next = last
 				}
-				m.focusAbsolutePos(newPos)
+				m.focusAbsolutePos(next)
+				return m, textinput.Blink
+			case "esc":
+				if m.setupPage > pageAdmin {
+					m.setupError = ""
+					previousFirst, _ := m.pageBounds(m.setupPage - 1)
+					m.focusAbsolutePos(previousFirst)
+				}
 				return m, textinput.Blink
 			case "enter":
-				// On toggles, Enter advances to the next field (use Space to toggle)
-				if m.inTogglePhase && m.toggleFocus < 0 {
-					// If this toggle is the last field, submit
-					if absPos == totalFields-1 {
-						// fall through to submit logic below
-					} else {
-						m.focusAbsolutePos(absPos + 1)
-						return m, textinput.Blink
-					}
+				// Enter moves through the screen; on its last item it checks
+				// the screen and moves to the next one, or submits.
+				if pos < last {
+					m.focusAbsolutePos(pos + 1)
+					return m, textinput.Blink
 				}
-				// On the last field, submit
-				if absPos == totalFields-1 {
-					// Validate admin fields
-					for i, f := range setupFieldDefs {
-						if strings.TrimSpace(m.setupInputs[i].Value()) == "" {
-							m.setupError = f.label + " is required"
-							m.focusAbsolutePos(i)
-							return m, textinput.Blink
-						}
-					}
-					// Reject an admin password Mage-OS would reject too, while
-					// the user can still fix it.
-					if err := magento.ValidateAdminPassword(m.setupInputs[adminPasswordField].Value()); err != nil {
-						m.setupError = err.Error()
-						m.focusAbsolutePos(adminPasswordField)
-						return m, textinput.Blink
-					}
-					if field, err := m.invalidStoreSetting(); err != nil {
-						m.setupError = err.Error()
-						m.focusAbsolutePos(field)
-						return m, textinput.Blink
-					}
-					// Validate Hyva fields if enabled
-					if m.installHyva {
-						for i, f := range hyvaFieldDefs {
-							if strings.TrimSpace(m.hyvaInputs[i].Value()) == "" {
-								m.setupError = "Hyvä " + f.label + " is required"
-								m.focusAbsolutePos(len(m.setupInputs) + toggleCount + i)
-								return m, textinput.Blink
-							}
-						}
-					}
-					m.setupError = ""
-					if m.installHyva {
-						return m.verifyHyva()
-					}
-					return m.showPreview()
+				if !m.validatePage(m.setupPage) {
+					return m, textinput.Blink
 				}
-				// Move to next field
-				m.focusAbsolutePos(absPos + 1)
-				return m, textinput.Blink
+				if m.setupPage < pageOptions {
+					nextFirst, _ := m.pageBounds(m.setupPage + 1)
+					m.focusAbsolutePos(nextFirst)
+					return m, textinput.Blink
+				}
+				if m.installHyva {
+					return m.verifyHyva()
+				}
+				return m.showPreview()
 			case " ":
 				// Space on toggles
 				if m.inTogglePhase {
@@ -1423,99 +1587,7 @@ func (m Model) View() string {
 		b.WriteString("\n")
 
 	case phaseSetupConfig:
-		b.WriteString("Configure Mage-OS:\n\n")
-		const labelWidth = 18
-		for i, f := range setupFieldDefs {
-			b.WriteString(fmt.Sprintf("  %-*s  ", labelWidth, f.label))
-			b.WriteString(m.setupInputs[i].View())
-			b.WriteString("\n")
-			if i == adminPasswordField {
-				for _, hint := range m.passwordHints() {
-					b.WriteString(dimStyle.Render(fmt.Sprintf("  %-*s  %s", labelWidth, "", hint)))
-					b.WriteString("\n")
-				}
-			}
-			if i == adminLastnameField {
-				b.WriteString("\n")
-			}
-			if i == currencyField {
-				b.WriteString(dimStyle.Render(fmt.Sprintf("  %-*s  %s",
-					labelWidth, "", "detected from this machine; the store's language, clock and currency")))
-				b.WriteString("\n")
-			}
-		}
-		b.WriteString("\n")
-		// Sample data toggle
-		sdCheckbox := "[ ]"
-		if m.installSampleData {
-			sdCheckbox = "[x]"
-		}
-		sdStyle := dimStyle
-		if m.inTogglePhase && m.toggleFocus == sampleDataToggle {
-			sdStyle = selectedItemStyle
-		}
-		b.WriteString(sdStyle.Render(fmt.Sprintf("  %-*s  %s", labelWidth, "Install sample data", sdCheckbox)))
-		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("                      Adds demo products, categories, and customers so you can"))
-		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("                      explore a fully populated store right away. Recommended"))
-		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("                      for your first install to see how everything works."))
-		b.WriteString("\n\n")
-		// Git toggle
-		gitCheckbox := "[ ]"
-		if m.initGit {
-			gitCheckbox = "[x]"
-		}
-		gitStyle := dimStyle
-		if m.inTogglePhase && m.toggleFocus == initGitToggle {
-			gitStyle = selectedItemStyle
-		}
-		b.WriteString(gitStyle.Render(fmt.Sprintf("  %-*s  %s", labelWidth, "Initialize Git", gitCheckbox)))
-		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("                      Runs git init and writes a .gitignore for Mage-OS, so the"))
-		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("                      project is ready to commit. An existing repository or"))
-		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("                      .gitignore is left alone."))
-		b.WriteString("\n\n")
-		// Hyva toggle
-		hyvaCheckbox := "[ ]"
-		if m.installHyva {
-			hyvaCheckbox = "[x]"
-		}
-		hyvaStyle := dimStyle
-		if m.inTogglePhase && m.toggleFocus == hyvaToggle {
-			hyvaStyle = selectedItemStyle
-		}
-		b.WriteString(hyvaStyle.Render(fmt.Sprintf("  %-*s  %s", labelWidth, "Install Hyvä", hyvaCheckbox)))
-		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("                      Hyvä is a modern, fast frontend theme that replaces the"))
-		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("                      default Luma theme. It uses Tailwind CSS and Alpine.js,"))
-		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("                      making frontend development much more enjoyable."))
-		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("                      ⚠ Hyvä requires a (free) license. Register at hyva.io and have"))
-		b.WriteString("\n")
-		b.WriteString(dimStyle.Render("                      your repo URL and auth token ready before continuing."))
-		b.WriteString("\n")
-		// Hyva credential fields (shown only when enabled)
-		if m.installHyva {
-			for i, f := range hyvaFieldDefs {
-				b.WriteString(fmt.Sprintf("  %-*s  ", labelWidth, "    "+f.label))
-				b.WriteString(m.hyvaInputs[i].View())
-				b.WriteString("\n")
-			}
-		}
-		b.WriteString("\n")
-		if m.verifyingHyva {
-			b.WriteString(fmt.Sprintf("  %s Checking the Hyvä credentials...\n\n", m.spinner.View()))
-		}
-		if m.setupError != "" {
-			b.WriteString(errorStyle.Render("  ✗ "+m.setupError) + "\n\n")
-		}
-		b.WriteString(dimStyle.Render("Tab/↑↓/Enter to move · Space to toggle options · " + revealPasswordKey + " to show/hide password · Enter to review command · ctrl+c to quit"))
+		b.WriteString(m.setupPageView())
 
 	case phaseSetupPreview:
 		b.WriteString("Review what will happen:\n\n")

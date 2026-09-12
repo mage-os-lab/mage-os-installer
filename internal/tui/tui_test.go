@@ -71,6 +71,24 @@ func awaitInstall(m Model) {
 	}
 }
 
+// finishPage presses Enter on the last item of the current screen, which
+// checks the screen and moves on to the next one (or to the preview).
+func finishPage(m Model) Model {
+	_, last := m.pageBounds(m.setupPage)
+	m.focusAbsolutePos(last)
+	return pressEnter(m)
+}
+
+// toOptionsPage walks past the admin and store screens with their current values.
+func toOptionsPage(m Model) Model {
+	return finishPage(finishPage(m))
+}
+
+// completeForm walks all three screens with their current values.
+func completeForm(m Model) Model {
+	return finishPage(toOptionsPage(m))
+}
+
 func pressEnter(m Model) Model {
 	return sendMsg(m, tea.KeyMsg{Type: tea.KeyEnter})
 }
@@ -379,16 +397,8 @@ func TestSetupConfig_ValidationRejectsEmpty(t *testing.T) {
 	m := advanceToSetupConfig(t)
 	// Clear the admin user field (index 0)
 	m.setupInputs[0].SetValue("")
-	// Navigate to the last admin field then to the last toggle and submit
-	// by pressing Enter on the last field in the form.
-	// Simulate being on the last hyva toggle (absPos == totalFields-1) with enter.
-	// Easier: set absPos to last and send enter directly via pressing tab many times.
-	totalFields := len(m.setupInputs) + toggleCount
-	for i := 0; i < totalFields-1; i++ {
-		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
-	}
-	// Now at the last field; press Enter → should trigger validation
-	m = pressEnter(m)
+	// Leaving the admin screen is what checks it.
+	m = finishPage(m)
 	if m.setupError == "" {
 		t.Error("expected a setupError after submitting with an empty required field, got none")
 	}
@@ -412,10 +422,7 @@ func TestSampleData_DefaultIsOff(t *testing.T) {
 func TestSampleData_ToggledBySpace(t *testing.T) {
 	m := advanceToSetupConfig(t)
 
-	// Tab through all admin fields to reach the sample data toggle
-	for i := 0; i < len(setupFieldDefs); i++ {
-		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
-	}
+	m = toOptionsPage(m) // the options screen opens on the sample data toggle
 	// Now at sample data toggle (absPos == len(setupInputs))
 	if !m.inTogglePhase || m.toggleFocus != sampleDataToggle {
 		t.Fatalf("expected focus on sample data toggle; inTogglePhase=%v toggleFocus=%d", m.inTogglePhase, m.toggleFocus)
@@ -436,7 +443,7 @@ func TestSampleData_ToggledBySpace(t *testing.T) {
 
 // TestSampleData_ViewContainsToggle verifies the setup form renders the sample data toggle.
 func TestSampleData_ViewContainsToggle(t *testing.T) {
-	m := advanceToSetupConfig(t)
+	m := toOptionsPage(advanceToSetupConfig(t))
 	view := m.View()
 	if !contains(view, "Install sample data") {
 		t.Error("setup config view should contain 'Install sample data' toggle")
@@ -445,7 +452,7 @@ func TestSampleData_ViewContainsToggle(t *testing.T) {
 
 // TestSampleData_ViewShowsChecked verifies the toggle renders as [x] when enabled.
 func TestSampleData_ViewShowsChecked(t *testing.T) {
-	m := advanceToSetupConfig(t)
+	m := toOptionsPage(advanceToSetupConfig(t))
 	m.installSampleData = true
 	view := m.View()
 	if !contains(view, "[x]") {
@@ -458,8 +465,8 @@ func TestSampleData_ViewShowsChecked(t *testing.T) {
 // navigateToHyvaToggle tabs through all admin fields and the sample data toggle
 // to land on the Hyvä toggle.
 func navigateToHyvaToggle(m Model) Model {
-	// len(setupFieldDefs) tabs → sample data toggle; the rest → Hyvä toggle
-	for i := 0; i < len(setupFieldDefs)+toggleCount-1; i++ {
+	m = toOptionsPage(m)
+	for i := 0; i < 2; i++ {
 		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
 	}
 	return m
@@ -496,7 +503,7 @@ func TestHyva_ToggledBySpace(t *testing.T) {
 
 // TestHyva_ViewContainsToggle verifies the setup form renders the Hyvä toggle.
 func TestHyva_ViewContainsToggle(t *testing.T) {
-	m := advanceToSetupConfig(t)
+	m := toOptionsPage(advanceToSetupConfig(t))
 	view := m.View()
 	if !contains(view, "Install Hyv") {
 		t.Error("setup config view should contain 'Install Hyvä' toggle label")
@@ -505,7 +512,7 @@ func TestHyva_ViewContainsToggle(t *testing.T) {
 
 // TestHyva_ViewShowsChecked verifies the toggle renders as [x] when Hyvä is enabled.
 func TestHyva_ViewShowsChecked(t *testing.T) {
-	m := advanceToSetupConfig(t)
+	m := toOptionsPage(advanceToSetupConfig(t))
 	m.installHyva = true
 	view := m.View()
 	if !contains(view, "[x]") {
@@ -529,7 +536,7 @@ func TestHyva_CredentialFieldsHiddenByDefault(t *testing.T) {
 // TestHyva_CredentialFieldsAppearsWhenEnabled verifies that enabling the toggle
 // shows the Hyvä repo URL and auth token fields (AC2).
 func TestHyva_CredentialFieldsAppearsWhenEnabled(t *testing.T) {
-	m := advanceToSetupConfig(t)
+	m := toOptionsPage(advanceToSetupConfig(t))
 	m.installHyva = true
 	view := m.View()
 	if !contains(view, "Repo URL") {
@@ -546,12 +553,7 @@ func TestHyva_CredentialFieldsAppearsWhenEnabled(t *testing.T) {
 func advanceToSetupPreview(t *testing.T) Model {
 	t.Helper()
 	m := advanceToSetupConfig(t)
-	// Navigate to the last field (Hyvä toggle) and press Enter to submit the form.
-	totalFields := len(m.setupInputs) + toggleCount
-	for i := 0; i < totalFields-1; i++ {
-		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
-	}
-	m = pressEnter(m) // submit form → phaseSetupPreview
+	m = completeForm(m)
 	if m.phase != phaseSetupPreview {
 		t.Fatalf("expected phaseSetupPreview, got %d", m.phase)
 	}
@@ -681,12 +683,7 @@ func advanceToInstalling(t *testing.T, steps []detector.Step) Model {
 	if m.phase != phaseSetupConfig {
 		t.Fatalf("expected phaseSetupConfig, got %d", m.phase)
 	}
-	// Navigate to last field and submit form
-	totalFields := len(m.setupInputs) + toggleCount
-	for i := 0; i < totalFields-1; i++ {
-		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
-	}
-	m = pressEnter(m) // submit form → preview
+	m = completeForm(m)
 	if m.phase != phaseSetupPreview {
 		t.Fatalf("expected phaseSetupPreview, got %d", m.phase)
 	}
@@ -1131,11 +1128,7 @@ func submitSetupForm(t *testing.T, password string) Model {
 	t.Helper()
 	m := advanceToSetupConfig(t)
 	m.setupInputs[adminPasswordField].SetValue(password)
-	totalFields := len(m.setupInputs) + toggleCount
-	for i := 0; i < totalFields-1; i++ {
-		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
-	}
-	return pressEnter(m)
+	return completeForm(m) // stops on the first screen that does not pass
 }
 
 // TestSetupConfig_RejectsAPasswordMageOSWouldReject verifies a password that
@@ -1253,10 +1246,7 @@ func TestSudoRefreshCommand_ExplainsItselfAtThePrompt(t *testing.T) {
 
 // navigateToGitToggle tabs from the first admin field to the Git toggle.
 func navigateToGitToggle(m Model) Model {
-	for i := 0; i < len(setupFieldDefs)+1; i++ {
-		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
-	}
-	return m
+	return sendMsg(toOptionsPage(m), tea.KeyMsg{Type: tea.KeyTab})
 }
 
 // TestGit_DefaultIsOn verifies a fresh project gets a repository unless the
@@ -1298,7 +1288,7 @@ func TestGit_TogglingDoesNotTouchTheOtherOptions(t *testing.T) {
 
 // TestSetupConfig_ExplainsTheGitOption verifies the form says what it does.
 func TestSetupConfig_ExplainsTheGitOption(t *testing.T) {
-	view := advanceToSetupConfig(t).View()
+	view := toOptionsPage(advanceToSetupConfig(t)).View()
 
 	for _, want := range []string{"Initialize Git", "git init", ".gitignore"} {
 		if !contains(view, want) {
@@ -2044,10 +2034,9 @@ func submitWithHyva(t *testing.T, repoURL, token string) (Model, tea.Cmd) {
 	m.installHyva = true
 	m.hyvaInputs[hyvaRepoURLField].SetValue(repoURL)
 	m.hyvaInputs[hyvaAuthTokenField].SetValue(token)
-	totalFields := len(m.setupInputs) + toggleCount + len(m.hyvaInputs)
-	for i := 0; i < totalFields-1; i++ {
-		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
-	}
+	m = toOptionsPage(m)
+	_, last := m.pageBounds(pageOptions)
+	m.focusAbsolutePos(last)
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	return updated.(Model), cmd
 }
@@ -2140,7 +2129,7 @@ func TestHyva_NoCheckWhenHyvaIsOff(t *testing.T) {
 // TestStoreSettings_AreOnTheForm verifies the three fields show up with
 // non-empty defaults.
 func TestStoreSettings_AreOnTheForm(t *testing.T) {
-	m := advanceToSetupConfig(t)
+	m := finishPage(advanceToSetupConfig(t))
 	view := m.View()
 
 	for _, want := range []string{"Locale", "Timezone", "Currency"} {
@@ -2175,11 +2164,7 @@ func TestStoreSettings_ReachTheInstallCommand(t *testing.T) {
 	m.setupInputs[localeField].SetValue("nl_NL")
 	m.setupInputs[timezoneField].SetValue("Europe/Amsterdam")
 	m.setupInputs[currencyField].SetValue("EUR")
-	totalFields := len(m.setupInputs) + toggleCount
-	for i := 0; i < totalFields-1; i++ {
-		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
-	}
-	m = pressEnter(m)
+	m = completeForm(m)
 	if m.phase != phaseSetupPreview {
 		t.Fatalf("expected phaseSetupPreview, got %d (%s)", m.phase, m.setupError)
 	}
@@ -2201,12 +2186,8 @@ func TestStoreSettings_ReachTheInstallCommand(t *testing.T) {
 func TestStoreSettings_BadTimezoneStaysOnTheForm(t *testing.T) {
 	m := advanceToSetupConfig(t)
 	m.setupInputs[timezoneField].SetValue("Amsterdam")
-	totalFields := len(m.setupInputs) + toggleCount
-	for i := 0; i < totalFields-1; i++ {
-		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
-	}
 
-	m = pressEnter(m)
+	m = toOptionsPage(m) // the store screen refuses to be left
 
 	if m.phase != phaseSetupConfig {
 		t.Fatalf("expected to stay on the form, got phase %d", m.phase)
@@ -2220,12 +2201,8 @@ func TestStoreSettings_BadTimezoneStaysOnTheForm(t *testing.T) {
 func TestStoreSettings_BadCurrencyStaysOnTheForm(t *testing.T) {
 	m := advanceToSetupConfig(t)
 	m.setupInputs[currencyField].SetValue("euro")
-	totalFields := len(m.setupInputs) + toggleCount
-	for i := 0; i < totalFields-1; i++ {
-		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
-	}
 
-	m = pressEnter(m)
+	m = toOptionsPage(m) // the store screen refuses to be left
 
 	if m.phase != phaseSetupConfig || m.setupFocus != currencyField {
 		t.Errorf("expected to stay on the form at the currency field, got phase %d focus %d", m.phase, m.setupFocus)
@@ -2246,11 +2223,7 @@ func installingIn(t *testing.T, dir string) Model {
 	m = sendMsg(m, detectionDoneMsg{envs: []detector.DetectedEnvironment{env}})
 	m.dirInput.SetValue(dir)
 	m = pressEnter(m)
-	totalFields := len(m.setupInputs) + toggleCount
-	for i := 0; i < totalFields-1; i++ {
-		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
-	}
-	m = pressEnter(m) // → preview
+	m = completeForm(m)
 	if m.phase != phaseSetupPreview {
 		t.Fatalf("expected phaseSetupPreview, got %d (%s)", m.phase, m.setupError)
 	}
@@ -2366,12 +2339,7 @@ func TestResume_YesRestoresTheSettingsAndStartsAtTheNextStep(t *testing.T) {
 	}
 
 	m.setupInputs[adminPasswordField].SetValue("Wachtwoord123")
-	m.focusAbsolutePos(0) // focus was left on the password field; count tabs from the top
-	totalFields := len(m.setupInputs) + toggleCount
-	for i := 0; i < totalFields-1; i++ {
-		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
-	}
-	m = pressEnter(m)
+	m = completeForm(m)
 
 	if m.phase != phaseSetupPreview || m.installCfg.StartFromStep != 2 {
 		t.Errorf("expected the preview with StartFromStep 2, got phase %d start %d (%s)", m.phase, m.installCfg.StartFromStep, m.setupError)
@@ -2491,5 +2459,106 @@ func TestOptions_NoFlagsMeansTheOldDefaults(t *testing.T) {
 
 	if m.setupInputs[adminPasswordField].Value() != setupFieldDefaults[adminPasswordField] || !m.initGit || m.installSampleData {
 		t.Error("without flags the form should show its own defaults")
+	}
+}
+
+
+// --- the form in three screens ---
+
+// TestSetupScreens_StartOnTheAdminAccount verifies the first screen shows the
+// account fields and nothing from the later screens.
+func TestSetupScreens_StartOnTheAdminAccount(t *testing.T) {
+	m := advanceToSetupConfig(t)
+	view := m.View()
+
+	for _, want := range []string{"Admin account", "step 1 of 3", "Admin password", "Enter to continue"} {
+		if !contains(view, want) {
+			t.Errorf("first screen should contain %q", want)
+		}
+	}
+	for _, unwanted := range []string{"Timezone", "Install sample data", "Install Hyvä"} {
+		if contains(view, unwanted) {
+			t.Errorf("first screen should not contain %q", unwanted)
+		}
+	}
+}
+
+// TestSetupScreens_EnterOnTheLastFieldMovesOn verifies Enter walks the screen
+// and then to the next one, landing on its first field.
+func TestSetupScreens_EnterOnTheLastFieldMovesOn(t *testing.T) {
+	m := advanceToSetupConfig(t)
+	for i := 0; i < len(setupFieldDefs); i++ {
+		if pageOf(i) != pageAdmin {
+			break
+		}
+		m = pressEnter(m)
+	}
+
+	if m.setupPage != pageStore || m.setupFocus != localeField {
+		t.Errorf("expected the store screen at its first field, got page %d focus %d", m.setupPage, m.setupFocus)
+	}
+	if !contains(m.View(), "step 2 of 3") {
+		t.Error("second screen should say it is step 2 of 3")
+	}
+}
+
+// TestSetupScreens_TabStaysOnTheScreen verifies Tab cycles within a screen
+// rather than wandering onto the next.
+func TestSetupScreens_TabStaysOnTheScreen(t *testing.T) {
+	m := advanceToSetupConfig(t)
+	for i := 0; i < 20; i++ {
+		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
+	}
+
+	if m.setupPage != pageAdmin {
+		t.Errorf("Tab should never leave the screen, got page %d", m.setupPage)
+	}
+}
+
+// TestSetupScreens_EscGoesBackAScreen verifies the way back keeps the values.
+func TestSetupScreens_EscGoesBackAScreen(t *testing.T) {
+	m := finishPage(advanceToSetupConfig(t))
+	m.setupInputs[localeField].SetValue("nl_NL")
+
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyEsc})
+
+	if m.setupPage != pageAdmin {
+		t.Errorf("Esc should return to the admin screen, got page %d", m.setupPage)
+	}
+	if m.setupInputs[localeField].Value() != "nl_NL" {
+		t.Error("going back should keep what was typed on the later screen")
+	}
+	if m = finishPage(m); m.setupPage != pageStore {
+		t.Error("the admin screen should still pass on the way forward again")
+	}
+}
+
+// TestSetupScreens_EachScreenIsCheckedWhenLeft verifies a bad admin password
+// keeps the user on screen one, and never shows screen two's problems early.
+func TestSetupScreens_EachScreenIsCheckedWhenLeft(t *testing.T) {
+	m := advanceToSetupConfig(t)
+	m.setupInputs[adminPasswordField].SetValue("short")
+	m.setupInputs[timezoneField].SetValue("Nowhere")
+
+	m = finishPage(m)
+
+	if m.setupPage != pageAdmin || !contains(m.setupError, "at least 12 characters") {
+		t.Errorf("expected to stay on the admin screen with the password rule, got page %d error %q", m.setupPage, m.setupError)
+	}
+}
+
+// TestSetupScreens_OptionsScreenSubmits verifies the last screen leads to the
+// preview and shows the toggles with their explanations.
+func TestSetupScreens_OptionsScreenSubmits(t *testing.T) {
+	m := toOptionsPage(advanceToSetupConfig(t))
+	view := m.View()
+	for _, want := range []string{"Options", "step 3 of 3", "Install sample data", "Initialize Git", "Install Hyvä", "Space to toggle", "Enter to review command"} {
+		if !contains(view, want) {
+			t.Errorf("options screen should contain %q", want)
+		}
+	}
+
+	if m = finishPage(m); m.phase != phaseSetupPreview {
+		t.Errorf("expected the preview after the options screen, got phase %d", m.phase)
 	}
 }
