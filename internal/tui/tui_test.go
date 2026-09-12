@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mage-os/mage-os-install/internal/detector"
 	"github.com/mage-os/mage-os-install/internal/magento"
+	"github.com/mage-os/mage-os-install/internal/prereq"
 )
 
 // mockDetector satisfies the detector.Detector interface for tests.
@@ -67,6 +68,12 @@ func confirmDirectory(m Model) Model {
 	return m
 }
 
+// passChecks reports every prerequisite as met, so the flow can move past
+// the directory prompt the way it does on a healthy machine.
+func passChecks(m Model) Model {
+	return sendMsg(m, checksDoneMsg{results: []prereq.Result{{Name: "Docker", Status: prereq.Pass}}})
+}
+
 // makeDetectedEnv builds a DetectedEnvironment backed by a mockDetector.
 func makeDetectedEnv(name string) detector.DetectedEnvironment {
 	return detector.DetectedEnvironment{
@@ -97,14 +104,14 @@ func TestNew_NameInputMatchesOriginalName(t *testing.T) {
 // --- name → directory phase ---
 
 func TestUpdate_EnterOnNameGoesToDirectoryPhase(t *testing.T) {
-	m := pressEnter(New())
+	m := passChecks(pressEnter(New()))
 	if m.phase != phaseDirectoryInput {
 		t.Errorf("expected phaseDirectoryInput, got %d", m.phase)
 	}
 }
 
 func TestUpdate_DirDefault_WhenNameUnchanged_IsCurrentDir(t *testing.T) {
-	m := pressEnter(New()) // name → dir
+	m := passChecks(pressEnter(New())) // name → dir
 	wd, _ := os.Getwd()
 	if m.dirInput.Value() != wd {
 		t.Errorf("expected dir %q, got %q", wd, m.dirInput.Value())
@@ -136,7 +143,7 @@ func TestUpdate_DetectionCachedDuringNameInput(t *testing.T) {
 }
 
 func TestUpdate_DetectionCachedDuringDirInput(t *testing.T) {
-	m := pressEnter(New()) // go to dir phase
+	m := passChecks(pressEnter(New())) // go to dir phase
 	m = sendMsg(m, detectionDoneMsg{envs: []detector.DetectedEnvironment{}})
 	if m.phase != phaseDirectoryInput {
 		t.Errorf("phase should stay phaseDirectoryInput, got %d", m.phase)
@@ -149,7 +156,7 @@ func TestUpdate_DetectionCachedDuringDirInput(t *testing.T) {
 // --- advancing from directory phase ---
 
 func TestUpdate_EnterOnDir_NoEnvs_GoesToError(t *testing.T) {
-	m := pressEnter(New())                                                     // → dir
+	m := passChecks(pressEnter(New()))                                                     // → dir
 	m = sendMsg(m, detectionDoneMsg{envs: []detector.DetectedEnvironment{}})   // cache: empty
 	m = confirmDirectory(m)                                                          // confirm dir
 	if m.phase != phaseError {
@@ -158,7 +165,7 @@ func TestUpdate_EnterOnDir_NoEnvs_GoesToError(t *testing.T) {
 }
 
 func TestUpdate_EnterOnDir_OneEnv_GoesToSetupConfig(t *testing.T) {
-	m := pressEnter(New())                                                                    // → dir
+	m := passChecks(pressEnter(New()))                                                                    // → dir
 	m = sendMsg(m, detectionDoneMsg{envs: []detector.DetectedEnvironment{makeDetectedEnv("DDEV")}}) // cache: one
 	m = confirmDirectory(m)                                                                         // confirm dir
 	if m.phase != phaseSetupConfig {
@@ -167,7 +174,7 @@ func TestUpdate_EnterOnDir_OneEnv_GoesToSetupConfig(t *testing.T) {
 }
 
 func TestUpdate_EnterOnDir_MultipleEnvs_GoesToSelection(t *testing.T) {
-	m := pressEnter(New()) // → dir
+	m := passChecks(pressEnter(New())) // → dir
 	m = sendMsg(m, detectionDoneMsg{envs: []detector.DetectedEnvironment{
 		makeDetectedEnv("DDEV"),
 		makeDetectedEnv("Warden"),
@@ -179,8 +186,8 @@ func TestUpdate_EnterOnDir_MultipleEnvs_GoesToSelection(t *testing.T) {
 }
 
 func TestUpdate_EnterOnDir_StillDetecting_GoesToDetecting(t *testing.T) {
-	m := pressEnter(New()) // → dir (envs still nil)
-	m = confirmDirectory(m)      // confirm dir without cached envs
+	m := passChecks(pressEnter(New())) // → dir (envs still nil)
+	m = confirmDirectory(m)            // confirm dir without cached envs
 	if m.phase != phaseDetecting {
 		t.Errorf("expected phaseDetecting, got %d", m.phase)
 	}
@@ -292,7 +299,7 @@ func TestView_DetectingPhaseShowsSpinner(t *testing.T) {
 // advanceToSetupConfig drives the model through name → dir → setup config using a mock env.
 func advanceToSetupConfig(t *testing.T) Model {
 	t.Helper()
-	m := pressEnter(New()) // name → dir
+	m := passChecks(pressEnter(New())) // name → dir
 	m = sendMsg(m, detectionDoneMsg{envs: []detector.DetectedEnvironment{makeDetectedEnv("DDEV")}})
 	m.dirInput.SetValue(t.TempDir()) // an install started from here writes its log there, not into the package
 	m = confirmDirectory(m) // dir → setup config
@@ -648,7 +655,7 @@ func makeDetectedEnvWithSteps(name string, steps []detector.Step) detector.Detec
 // with the given named steps.
 func advanceToInstalling(t *testing.T, steps []detector.Step) Model {
 	t.Helper()
-	m := pressEnter(New()) // name → dir
+	m := passChecks(pressEnter(New())) // name → dir
 	env := makeDetectedEnvWithSteps("DDEV", steps)
 	m = sendMsg(m, detectionDoneMsg{envs: []detector.DetectedEnvironment{env}})
 	m.dirInput.SetValue(t.TempDir()) // the install started below must not log into the package directory
@@ -993,7 +1000,7 @@ func TestResume_QExitsInstaller(t *testing.T) {
 // advanceToOpenBrowser drives the model to phaseOpenBrowser (successful install).
 func advanceToOpenBrowser(t *testing.T) Model {
 	t.Helper()
-	m := pressEnter(New()) // name → dir
+	m := passChecks(pressEnter(New())) // name → dir
 	env := makeDetectedEnv("DDEV")
 	m = sendMsg(m, detectionDoneMsg{envs: []detector.DetectedEnvironment{env}})
 	m = confirmDirectory(m) // dir → setup config
@@ -1373,7 +1380,7 @@ func TestDirectory_WarnsWhenItAlreadyHasContent(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	m := pressEnter(New())
+	m := passChecks(pressEnter(New()))
 	m.dirInput.SetValue(dir)
 
 	m = pressEnter(m)
@@ -1416,7 +1423,7 @@ func TestSuccess_TellsHowToRunMagentoCommands(t *testing.T) {
 // TestDirectory_YesInstallsThere verifies confirming continues to the setup
 // form as before.
 func TestDirectory_YesInstallsThere(t *testing.T) {
-	m := pressEnter(New())
+	m := passChecks(pressEnter(New()))
 	m = sendMsg(m, detectionDoneMsg{envs: []detector.DetectedEnvironment{makeDetectedEnv("DDEV")}})
 	m = pressEnter(m) // this test's working directory has content
 	if m.phase != phaseDirectoryConfirm {
@@ -1433,7 +1440,7 @@ func TestDirectory_YesInstallsThere(t *testing.T) {
 // TestDirectory_NoGoesBackToTheInput verifies declining returns to the prompt
 // with the typed path intact.
 func TestDirectory_NoGoesBackToTheInput(t *testing.T) {
-	m := pressEnter(New())
+	m := passChecks(pressEnter(New()))
 	m = pressEnter(m)
 	if m.phase != phaseDirectoryConfirm {
 		t.Fatalf("expected phaseDirectoryConfirm, got %d", m.phase)
@@ -1454,7 +1461,7 @@ func TestDirectory_NoGoesBackToTheInput(t *testing.T) {
 // fresh directory, is not slowed down by a question.
 func TestDirectory_EmptyOrMissingNeedsNoConfirmation(t *testing.T) {
 	for name, dir := range map[string]string{"empty": t.TempDir(), "missing": filepath.Join(t.TempDir(), "new-shop")} {
-		m := pressEnter(New())
+		m := passChecks(pressEnter(New()))
 		m = sendMsg(m, detectionDoneMsg{envs: []detector.DetectedEnvironment{makeDetectedEnv("DDEV")}})
 		m.dirInput.SetValue(dir)
 
@@ -1888,5 +1895,123 @@ func TestLogView_WrapsLongLinesInsteadOfCuttingThem(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(lines, "\n"), "END") {
 		t.Error("wrapping should keep the end of the line")
+	}
+}
+
+// --- prerequisite checks ---
+
+// atDirectoryWithEnv is a model on the directory prompt with an environment
+// already detected, and the checks still running.
+func atDirectoryWithEnv() Model {
+	m := pressEnter(New())
+	return sendMsg(m, detectionDoneMsg{envs: []detector.DetectedEnvironment{makeDetectedEnv("DDEV")}})
+}
+
+// TestChecks_DirectoryWaitsForThemThenContinues verifies the flow pauses on
+// the checks when they are slower than the user, and goes on once they pass.
+func TestChecks_DirectoryWaitsForThemThenContinues(t *testing.T) {
+	m := confirmDirectory(atDirectoryWithEnv())
+	if m.phase != phaseChecking {
+		t.Fatalf("expected phaseChecking while checks run, got %d", m.phase)
+	}
+	if !contains(m.View(), "Checking prerequisites") {
+		t.Error("checking screen should say what it is waiting for")
+	}
+
+	m = passChecks(m)
+
+	if m.phase != phaseSetupConfig {
+		t.Errorf("expected phaseSetupConfig once the checks pass, got %d", m.phase)
+	}
+}
+
+// TestChecks_DetectionFinishingEarlyDoesNotSkipThem verifies detection results
+// arriving during the checks are kept for later rather than jumping ahead.
+func TestChecks_DetectionFinishingEarlyDoesNotSkipThem(t *testing.T) {
+	m := confirmDirectory(pressEnter(New()))
+	if m.phase != phaseChecking {
+		t.Fatalf("expected phaseChecking, got %d", m.phase)
+	}
+
+	m = sendMsg(m, detectionDoneMsg{envs: []detector.DetectedEnvironment{makeDetectedEnv("DDEV")}})
+	if m.phase != phaseChecking {
+		t.Fatalf("detection should not leave the checking phase, got %d", m.phase)
+	}
+
+	m = passChecks(m)
+	if m.phase != phaseSetupConfig {
+		t.Errorf("expected phaseSetupConfig after checks with envs cached, got %d", m.phase)
+	}
+}
+
+// TestChecks_FailureBlocksTheInstall verifies a failed check stops the flow,
+// says what is wrong, and does not let Enter through.
+func TestChecks_FailureBlocksTheInstall(t *testing.T) {
+	m := confirmDirectory(atDirectoryWithEnv())
+	m = sendMsg(m, checksDoneMsg{results: []prereq.Result{
+		{Name: "Docker", Status: prereq.Fail, Detail: "the Docker daemon is not running"},
+		{Name: "git", Status: prereq.Pass, Detail: "found"},
+	}})
+
+	if m.phase != phaseChecksReview {
+		t.Fatalf("expected phaseChecksReview, got %d", m.phase)
+	}
+	view := m.View()
+	for _, want := range []string{"Some prerequisites are missing", "✗ Docker", "the Docker daemon is not running", "✓ git", "press r to check again"} {
+		if !contains(view, want) {
+			t.Errorf("review screen should contain %q", want)
+		}
+	}
+
+	if m = pressEnter(m); m.phase != phaseChecksReview {
+		t.Errorf("Enter should not get past a failed check, got phase %d", m.phase)
+	}
+}
+
+// TestChecks_RetryRunsThemAgain verifies r re-runs the checks.
+func TestChecks_RetryRunsThemAgain(t *testing.T) {
+	m := confirmDirectory(atDirectoryWithEnv())
+	m = sendMsg(m, checksDoneMsg{results: []prereq.Result{{Name: "Docker", Status: prereq.Fail}}})
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	m = updated.(Model)
+
+	if m.phase != phaseChecking || m.checksDone {
+		t.Errorf("r should go back to checking, got phase %d checksDone=%v", m.phase, m.checksDone)
+	}
+	if cmd == nil {
+		t.Error("r should start the checks again")
+	}
+}
+
+// TestChecks_WarningAsksToBeReadThenContinues verifies a warning shows the
+// review screen once and lets Enter through.
+func TestChecks_WarningAsksToBeReadThenContinues(t *testing.T) {
+	m := confirmDirectory(atDirectoryWithEnv())
+	m = sendMsg(m, checksDoneMsg{results: []prereq.Result{
+		{Name: "git", Status: prereq.Warn, Detail: "git is not installed, the Git option will be skipped"},
+	}})
+
+	if m.phase != phaseChecksReview {
+		t.Fatalf("expected phaseChecksReview for a warning, got %d", m.phase)
+	}
+	for _, want := range []string{"Before we start", "⚠ git", "Enter to continue"} {
+		if !contains(m.View(), want) {
+			t.Errorf("review screen should contain %q", want)
+		}
+	}
+
+	if m = pressEnter(m); m.phase != phaseSetupConfig {
+		t.Errorf("Enter should continue past a warning, got phase %d", m.phase)
+	}
+}
+
+// TestChecks_AllPassingNeverShowsAScreen verifies the healthy path adds no
+// keypress.
+func TestChecks_AllPassingNeverShowsAScreen(t *testing.T) {
+	m := passChecks(atDirectoryWithEnv())
+
+	if m = confirmDirectory(m); m.phase != phaseSetupConfig {
+		t.Errorf("expected phaseSetupConfig straight away, got %d", m.phase)
 	}
 }

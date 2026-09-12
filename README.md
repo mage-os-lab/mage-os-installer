@@ -68,10 +68,11 @@ The installer will walk you through:
 
 1. **Project name** -- defaults to the current directory name
 2. **Install directory** -- where to create the project
-3. **Environment selection** -- pick DDEV or Warden (auto-selected if only one is available)
-4. **Admin credentials** -- configure the Mage-OS admin user
-5. **Command review** -- inspect the `setup:install` flags before running
-6. **Installation** -- watch progress in real time
+3. **Prerequisites** -- Docker running, the Mage-OS repository reachable, `git` and `sudo` available
+4. **Environment selection** -- pick DDEV or Warden (auto-selected if only one is available)
+5. **Admin credentials** -- configure the Mage-OS admin user
+6. **Command review** -- inspect the `setup:install` flags before running
+7. **Installation** -- watch progress in real time
 
 ## Wishlist
 
