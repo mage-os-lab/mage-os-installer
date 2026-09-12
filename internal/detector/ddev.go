@@ -47,21 +47,21 @@ func (d *DdevDetector) buildSteps(config *Config) {
 		Step{Name: "Install Redis addon"},
 		Step{Name: "Install Cron addon"},
 		Step{Name: "Install RabbitMQ addon"},
-		Step{Name: "Start DDEV"},
+		Step{Name: "Start DDEV", Estimate: EstimateImagePull},
 		Step{Name: "Apply RabbitMQ config"},
-		Step{Name: "Create Mage-OS project"},
+		Step{Name: "Create Mage-OS project", Estimate: EstimateComposer},
 		Step{Name: "Copy project files"},
 		Step{Name: "Create composer home directory"},
 		Step{Name: "Copy auth.json"},
-		Step{Name: "Install Mage-OS"},
+		Step{Name: "Install Mage-OS", Estimate: EstimateInstall},
 	)
 	if config != nil && config.InstallSampleData {
-		d.steps = append(d.steps, Step{Name: "Install sample data"})
+		d.steps = append(d.steps, Step{Name: "Install sample data", Estimate: EstimateSample})
 	}
 	if config != nil && config.InstallHyva {
 		d.steps = append(d.steps,
 			Step{Name: "Configure Hyvä repository"},
-			Step{Name: "Install Hyvä theme"},
+			Step{Name: "Install Hyvä theme", Estimate: EstimateHyva},
 			Step{Name: "Enable Hyvä modules"},
 		)
 	}

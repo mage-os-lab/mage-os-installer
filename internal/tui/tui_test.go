@@ -1417,3 +1417,62 @@ func TestPassword_HintStillStatesTheRules(t *testing.T) {
 		t.Error("setup form should still state the password rules")
 	}
 }
+
+// --- step list on the preview screen ---
+
+// previewWithSteps gives the mock detector a step list, since its PrepareSteps
+// is a no-op.
+func previewWithSteps(t *testing.T, steps []detector.Step) Model {
+	t.Helper()
+	m := advanceToSetupPreview(t)
+	m.selected.Detector.(*mockDetector).steps = steps
+	return m
+}
+
+// TestPreview_ListsEveryStepBeforeTheCommand verifies the user sees what the
+// install is going to do, not only the setup:install flags.
+func TestPreview_ListsEveryStepBeforeTheCommand(t *testing.T) {
+	m := previewWithSteps(t, []detector.Step{{Name: "Configure things"}, {Name: "Install Mage-OS"}})
+	view := m.View()
+
+	for _, want := range []string{"1. Configure things", "2. Install Mage-OS", "Then run:", "setup:install"} {
+		if !contains(view, want) {
+			t.Errorf("preview should contain %q", want)
+		}
+	}
+	if strings.Index(view, "Install Mage-OS") > strings.Index(view, "setup:install") {
+		t.Error("steps should be listed before the command")
+	}
+}
+
+// TestPreview_ShowsDurationHintsForSlowSteps verifies a step's estimate is
+// printed next to it.
+func TestPreview_ShowsDurationHintsForSlowSteps(t *testing.T) {
+	m := previewWithSteps(t, []detector.Step{{Name: "Create Mage-OS project", Estimate: detector.EstimateComposer}})
+
+	if !contains(m.View(), detector.EstimateComposer) {
+		t.Errorf("preview should contain the estimate %q", detector.EstimateComposer)
+	}
+}
+
+// TestPreview_ScrollCoversTheStepList verifies scrolling reaches the end of the
+// command even now that the step list sits above it.
+func TestPreview_ScrollCoversTheStepList(t *testing.T) {
+	var steps []detector.Step
+	for i := 0; i < 20; i++ {
+		steps = append(steps, detector.Step{Name: fmt.Sprintf("Step %02d", i)})
+	}
+	m := previewWithSteps(t, steps)
+	m.windowHeight = 24
+
+	for i := 0; i < 100; i++ {
+		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+
+	if want := len(m.previewLines()) - m.previewMaxVisible(); m.previewScroll != want {
+		t.Errorf("previewScroll = %d, expected to stop at %d", m.previewScroll, want)
+	}
+	if !contains(m.View(), "--admin-password") {
+		t.Error("scrolling to the end should reveal the last flag")
+	}
+}

@@ -388,6 +388,52 @@ func (m *Model) passwordHints() []string {
 	return append(hints, usage)
 }
 
+// previewLines are the scrollable body of the preview screen: the steps the
+// install will run, with a duration hint where the wait is long enough to
+// look like a hang, followed by the setup:install command itself.
+func (m *Model) previewLines() []string {
+	var lines []string
+
+	steps := m.selected.Detector.Steps()
+	nameWidth := 0
+	for _, step := range steps {
+		nameWidth = max(nameWidth, len([]rune(step.Name)))
+	}
+	for i, step := range steps {
+		line := fmt.Sprintf("  %2d. %-*s", i+1, nameWidth, step.Name)
+		if step.Estimate != "" {
+			line += "  " + dimStyle.Render(step.Estimate)
+		}
+		lines = append(lines, line)
+	}
+
+	lines = append(lines, "", "Then run:", "", m.selected.Detector.SetupCommandPrefix()+" \\")
+	flags := m.selected.Detector.SetupInstallFlags(&m.installCfg)
+	for i, f := range flags {
+		suffix := dimStyle.Render(" \\")
+		if i == len(flags)-1 {
+			suffix = ""
+		}
+		if f.Editable {
+			lines = append(lines, "  "+dimStyle.Render(f.Flag+"=")+highlightStyle.Render(f.Value)+suffix)
+			continue
+		}
+		lines = append(lines, "  "+dimStyle.Render(f.Flag+"="+f.Value)+suffix)
+	}
+	return lines
+}
+
+// previewMaxVisible is how many preview lines fit between the banner and the
+// footer at the current terminal height. When the terminal never reported a
+// size there is nothing to fit into, so everything is shown.
+func (m *Model) previewMaxVisible() int {
+	const chrome = 14 // banner, title, warning and key hints
+	if m.windowHeight <= 0 {
+		return len(m.previewLines())
+	}
+	return max(5, m.windowHeight-chrome)
+}
+
 // errorLineWidth is how much room a line has inside the bordered box:
 // the window minus its border and padding.
 func (m *Model) errorLineWidth() int {
@@ -739,12 +785,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.previewScroll--
 				}
 			case "down", "j":
-				totalLines := 1 + len(m.selected.Detector.SetupInstallFlags(&m.installCfg))
-				maxVisible := m.windowHeight - 10
-				if maxVisible < 3 {
-					maxVisible = 3
-				}
-				if maxScroll := totalLines - maxVisible; m.previewScroll < maxScroll {
+				if maxScroll := len(m.previewLines()) - m.previewMaxVisible(); m.previewScroll < maxScroll {
 					m.previewScroll++
 				}
 			case "enter":
@@ -934,27 +975,9 @@ func (m Model) View() string {
 		b.WriteString(dimStyle.Render("Tab/↑↓/Enter to move · Space to toggle options · " + revealPasswordKey + " to show/hide password · Enter to review command · ctrl+c to quit"))
 
 	case phaseSetupPreview:
-		b.WriteString("Review the setup command:\n\n")
-		flags := m.selected.Detector.SetupInstallFlags(&m.installCfg)
-		var lines []string
-		lines = append(lines, m.selected.Detector.SetupCommandPrefix()+" \\")
-		for i, f := range flags {
-			suffix := dimStyle.Render(" \\")
-			if i == len(flags)-1 {
-				suffix = ""
-			}
-			var line string
-			if f.Editable {
-				line = "  " + dimStyle.Render(f.Flag+"=") + highlightStyle.Render(f.Value) + suffix
-			} else {
-				line = "  " + dimStyle.Render(f.Flag+"="+f.Value) + suffix
-			}
-			lines = append(lines, line)
-		}
-		maxVisible := m.windowHeight - 10
-		if maxVisible < 5 {
-			maxVisible = 5
-		}
+		b.WriteString("Review what will happen:\n\n")
+		lines := m.previewLines()
+		maxVisible := m.previewMaxVisible()
 		start := m.previewScroll
 		if start >= len(lines) {
 			start = max(0, len(lines)-1)
