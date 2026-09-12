@@ -15,17 +15,23 @@ import (
 
 // mockDetector satisfies the detector.Detector interface for tests.
 type mockDetector struct {
-	info       detector.DetectorInfo
-	env        *detector.Environment
-	installErr error
-	steps      []detector.Step
+	info          detector.DetectorInfo
+	env           *detector.Environment
+	installErr    error
+	installOutput []string // lines Install logs before returning
+	steps         []detector.Step
 }
 
 func (d *mockDetector) Info() detector.DetectorInfo            { return d.info }
 func (d *mockDetector) Steps() []detector.Step                 { return d.steps }
 func (d *mockDetector) PrepareSteps(_ *detector.Config)        {}
 func (d *mockDetector) Detect() (*detector.Environment, error) { return d.env, nil }
-func (d *mockDetector) Install(cfg *detector.Config) error     { return d.installErr }
+func (d *mockDetector) Install(cfg *detector.Config) error {
+	for _, line := range d.installOutput {
+		cfg.Log(line)
+	}
+	return d.installErr
+}
 func (d *mockDetector) SetupInstallFlags(cfg *detector.Config) []detector.SetupFlag {
 	return []detector.SetupFlag{
 		{Flag: detector.BackendFrontnameFlag, Value: "backend"},
@@ -288,6 +294,7 @@ func advanceToSetupConfig(t *testing.T) Model {
 	t.Helper()
 	m := pressEnter(New()) // name → dir
 	m = sendMsg(m, detectionDoneMsg{envs: []detector.DetectedEnvironment{makeDetectedEnv("DDEV")}})
+	m.dirInput.SetValue(t.TempDir()) // an install started from here writes its log there, not into the package
 	m = confirmDirectory(m) // dir → setup config
 	if m.phase != phaseSetupConfig {
 		t.Fatalf("expected phaseSetupConfig, got %d", m.phase)
@@ -644,6 +651,7 @@ func advanceToInstalling(t *testing.T, steps []detector.Step) Model {
 	m := pressEnter(New()) // name → dir
 	env := makeDetectedEnvWithSteps("DDEV", steps)
 	m = sendMsg(m, detectionDoneMsg{envs: []detector.DetectedEnvironment{env}})
+	m.dirInput.SetValue(t.TempDir()) // the install started below must not log into the package directory
 	m = confirmDirectory(m) // dir → setup config
 	if m.phase != phaseSetupConfig {
 		t.Fatalf("expected phaseSetupConfig, got %d", m.phase)
@@ -877,6 +885,7 @@ func TestResume_FailureShowsTheLastLinesOfOutput(t *testing.T) {
 // screen retries the installation and transitions to phaseInstalling (AC2).
 func TestResume_RetryTransitionsToInstalling(t *testing.T) {
 	m := New()
+	m.installCfg.Directory = t.TempDir()
 	m.phase = phaseInstallDone
 	m.installErr = fmt.Errorf("step 1 failed")
 	env := makeDetectedEnvWithSteps("DDEV", []detector.Step{
@@ -907,6 +916,7 @@ func TestResume_RetryTransitionsToInstalling(t *testing.T) {
 // remain in the done state and StartFromStep is set to the failed step index (AC3).
 func TestResume_CompletedStepsSkippedOnRetry(t *testing.T) {
 	m := New()
+	m.installCfg.Directory = t.TempDir()
 	m.phase = phaseInstallDone
 	m.installErr = fmt.Errorf("step 2 failed")
 	env := makeDetectedEnvWithSteps("DDEV", []detector.Step{
@@ -1694,5 +1704,189 @@ func TestInstall_RetryRestartsTheClockOfTheRetriedStep(t *testing.T) {
 
 	if got := m.installSteps[1].elapsed(); got != 10*time.Second {
 		t.Errorf("retried step elapsed = %v, want 10s", got)
+	}
+}
+
+// --- the install log file and the log view ---
+
+// drainInstall runs runInstall against d and collects every message until
+// the install reports done.
+func drainInstall(t *testing.T, d detector.Detector, cfg detector.Config) []tea.Msg {
+	t.Helper()
+	ch, _ := runInstall(d, cfg)
+	var msgs []tea.Msg
+	for msg := range ch {
+		msgs = append(msgs, msg)
+		if _, done := msg.(installDoneMsg); done {
+			return msgs
+		}
+	}
+	return msgs
+}
+
+// TestInstallLog_WritesEveryLineToTheProjectDirectory verifies the file holds
+// the output, a run header, and the outcome.
+func TestInstallLog_WritesEveryLineToTheProjectDirectory(t *testing.T) {
+	dir := t.TempDir()
+	d := &mockDetector{installOutput: []string{"▸ ddev start", "\x1b[31mSomething red\x1b[0m"}, installErr: fmt.Errorf("boom")}
+
+	drainInstall(t, d, detector.Config{Directory: dir})
+
+	content, err := os.ReadFile(installLogPath(dir))
+	if err != nil {
+		t.Fatalf("expected a log file: %v", err)
+	}
+	for _, want := range []string{"=== mage-os-install run started", "▸ ddev start", "Something red", "=== failed: boom"} {
+		if !strings.Contains(string(content), want) {
+			t.Errorf("log file should contain %q, got:\n%s", want, content)
+		}
+	}
+	if strings.Contains(string(content), "\x1b[") {
+		t.Error("log file should not contain colour codes")
+	}
+}
+
+// TestInstallLog_AppendsAcrossRuns verifies a retry lands in the same file
+// under its own header rather than replacing the first run.
+func TestInstallLog_AppendsAcrossRuns(t *testing.T) {
+	dir := t.TempDir()
+	drainInstall(t, &mockDetector{installOutput: []string{"first run"}}, detector.Config{Directory: dir})
+	drainInstall(t, &mockDetector{installOutput: []string{"second run"}}, detector.Config{Directory: dir})
+
+	content, _ := os.ReadFile(installLogPath(dir))
+
+	if strings.Count(string(content), "=== mage-os-install run started") != 2 {
+		t.Errorf("expected two run headers, got:\n%s", content)
+	}
+	for _, want := range []string{"first run", "second run", "=== installed"} {
+		if !strings.Contains(string(content), want) {
+			t.Errorf("log file should contain %q", want)
+		}
+	}
+}
+
+// TestInstallLog_UnwritableDirectoryIsReportedNotFatal verifies a log file
+// that cannot be opened is mentioned in the output and the install still runs.
+func TestInstallLog_UnwritableDirectoryIsReportedNotFatal(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0755) })
+
+	msgs := drainInstall(t, &mockDetector{installOutput: []string{"still running"}}, detector.Config{Directory: dir})
+
+	var joined []string
+	for _, msg := range msgs {
+		if line, ok := msg.(logMsg); ok {
+			joined = append(joined, string(line))
+		}
+	}
+	all := strings.Join(joined, "\n")
+	if !strings.Contains(all, "Could not write "+installLogPath(dir)) {
+		t.Errorf("output should mention the log file could not be written, got:\n%s", all)
+	}
+	if !strings.Contains(all, "still running") {
+		t.Error("the install should have carried on")
+	}
+	if _, done := msgs[len(msgs)-1].(installDoneMsg); !done {
+		t.Error("the install should have finished")
+	}
+}
+
+// failedModel is a model on the failure screen with a known log.
+func failedModel(t *testing.T, lines int) Model {
+	t.Helper()
+	m := advanceToSetupPreview(t)
+	m.phase = phaseInstallDone
+	m.installErr = fmt.Errorf("step failed")
+	for i := 0; i < lines; i++ {
+		m.logLines = append(m.logLines, fmt.Sprintf("log-line-%03d", i))
+	}
+	return m
+}
+
+// TestFailure_PointsAtTheLogFile verifies the failure screen names the file and
+// the key that opens the full log.
+func TestFailure_PointsAtTheLogFile(t *testing.T) {
+	m := failedModel(t, 3)
+	view := m.View()
+
+	for _, want := range []string{"Full log: " + installLogPath(m.installCfg.Directory), viewLogKey + " to view the full log"} {
+		if !contains(view, want) {
+			t.Errorf("failure screen should contain %q", want)
+		}
+	}
+}
+
+// TestLogView_OpensAtTheEndAndShowsEveryLine verifies l shows the log,
+// scrolled to the most recent output.
+func TestLogView_OpensAtTheEndAndShowsEveryLine(t *testing.T) {
+	m := failedModel(t, 50)
+	m.windowHeight = 30
+
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(viewLogKey)})
+
+	if m.phase != phaseLogView {
+		t.Fatalf("expected phaseLogView, got %d", m.phase)
+	}
+	view := m.View()
+	if !contains(view, "log-line-049") {
+		t.Error("log view should open showing the last line")
+	}
+	if contains(view, "log-line-000") {
+		t.Error("log view should not show the first line while scrolled to the end")
+	}
+	if !contains(view, "of 50") {
+		t.Error("log view should say how many lines there are")
+	}
+}
+
+// TestLogView_ScrollsAndGoesBack verifies the navigation keys and the way out.
+func TestLogView_ScrollsAndGoesBack(t *testing.T) {
+	m := failedModel(t, 50)
+	m.windowHeight = 30
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(viewLogKey)})
+
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	if !contains(m.View(), "log-line-000") || m.logScroll != 0 {
+		t.Error("g should jump to the top")
+	}
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyPgDown})
+	if m.logScroll != m.logViewRows() {
+		t.Errorf("PgDn should move a page, scroll is %d", m.logScroll)
+	}
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
+	if m.logScroll != m.logViewBottom() {
+		t.Error("G should jump to the bottom")
+	}
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyDown})
+	if m.logScroll != m.logViewBottom() {
+		t.Error("scrolling past the end should stay at the bottom")
+	}
+
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.phase != phaseInstallDone {
+		t.Errorf("esc should return to the failure screen, got phase %d", m.phase)
+	}
+}
+
+// TestLogView_WrapsLongLinesInsteadOfCuttingThem verifies a long line stays
+// readable in the viewer.
+func TestLogView_WrapsLongLinesInsteadOfCuttingThem(t *testing.T) {
+	m := failedModel(t, 0)
+	m.windowWidth = 40
+	m.logLines = []string{strings.Repeat("word ", 30) + "END"}
+
+	lines := m.logViewLines()
+
+	if len(lines) < 2 {
+		t.Fatalf("expected the line to wrap, got %q", lines)
+	}
+	if !strings.Contains(strings.Join(lines, "\n"), "END") {
+		t.Error("wrapping should keep the end of the line")
 	}
 }

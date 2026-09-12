@@ -30,6 +30,7 @@ const (
 	phaseInstalling
 	phaseOpenBrowser // ask whether to open the site after install
 	phaseInstallDone
+	phaseLogView // the whole install log, scrollable
 	phaseError
 )
 
@@ -91,6 +92,7 @@ type Model struct {
 	windowWidth   int
 	logCh         <-chan tea.Msg
 	logLines      []string
+	logScroll     int // first visible line in the log view
 	installSteps  []installStep
 	installStart  time.Time // when the current install run began
 	installErr    error
@@ -466,6 +468,38 @@ func (m *Model) stepLine(step installStep) string {
 	}
 }
 
+// viewLogKey opens the whole install log from the failure screen.
+const viewLogKey = "l"
+
+// logViewLines are the install output lines as the log view shows them:
+// colour codes stripped and long lines wrapped to the terminal, so nothing is
+// cut off.
+func (m *Model) logViewLines() []string {
+	width := 0
+	if m.windowWidth > 0 {
+		width = m.windowWidth - 2
+	}
+	var lines []string
+	for _, line := range m.logLines {
+		lines = append(lines, strings.Split(wrapLine(stripANSI(line), width), "\n")...)
+	}
+	return lines
+}
+
+// logViewRows is how many log lines fit under the banner and above the footer.
+func (m *Model) logViewRows() int {
+	const chrome = 14 // banner, title, blank lines and footer
+	if m.windowHeight <= 0 {
+		return 20
+	}
+	return max(5, m.windowHeight-chrome)
+}
+
+// logViewBottom is the scroll position that shows the last line.
+func (m *Model) logViewBottom() int {
+	return max(0, len(m.logViewLines())-m.logViewRows())
+}
+
 // errorLineWidth is how much room a line has inside the bordered box:
 // the window minus its border and padding.
 func (m *Model) errorLineWidth() int {
@@ -524,10 +558,37 @@ func runInstall(d detector.Detector, cfg detector.Config) (<-chan tea.Msg, tea.C
 			ch <- installDoneMsg{err: fmt.Errorf("could not create directory %s: %w", cfg.Directory, err)}
 			return
 		}
-		cfg.Log = func(line string) { ch <- logMsg(line) }
-		cfg.OnStepStart = func(i int) { ch <- stepStartMsg{index: i} }
-		cfg.OnStepDone = func(i int) { ch <- stepDoneMsg{index: i} }
-		ch <- installDoneMsg{err: d.Install(&cfg)}
+		log, err := openInstallLog(cfg.Directory)
+		if err != nil {
+			ch <- logMsg("⚠ Could not write " + installLogPath(cfg.Directory) + ": " + err.Error())
+		}
+		defer log.Close()
+
+		stepName := func(i int) string {
+			if steps := d.Steps(); i < len(steps) {
+				return steps[i].Name
+			}
+			return fmt.Sprintf("step %d", i)
+		}
+		cfg.Log = func(line string) {
+			log.Write(line)
+			ch <- logMsg(line)
+		}
+		cfg.OnStepStart = func(i int) {
+			log.Write("--- " + stepName(i))
+			ch <- stepStartMsg{index: i}
+		}
+		cfg.OnStepDone = func(i int) {
+			log.Write("--- " + stepName(i) + ": done")
+			ch <- stepDoneMsg{index: i}
+		}
+		err = d.Install(&cfg)
+		if err != nil {
+			log.Write("=== failed: " + err.Error())
+		} else {
+			log.Write("=== installed")
+		}
+		ch <- installDoneMsg{err: err}
 	}()
 
 	return ch, waitForLog(ch)
@@ -895,9 +956,38 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.logCh = ch
 					return m, tea.Batch(m.spinner.Tick, cmd)
 				}
+			case viewLogKey:
+				if m.phase == phaseInstallDone {
+					m.logScroll = m.logViewBottom()
+					m.phase = phaseLogView
+					return m, nil
+				}
 			case "enter", "q", "esc":
 				return m, tea.Quit
 			}
+		}
+	}
+
+	if m.phase == phaseLogView {
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.String() {
+			case "up", "k":
+				m.logScroll--
+			case "down", "j":
+				m.logScroll++
+			case "pgup":
+				m.logScroll -= m.logViewRows()
+			case "pgdown", " ":
+				m.logScroll += m.logViewRows()
+			case "g", "home":
+				m.logScroll = 0
+			case "G", "end":
+				m.logScroll = m.logViewBottom()
+			case "esc", "q", viewLogKey:
+				m.phase = phaseInstallDone
+				return m, nil
+			}
+			m.logScroll = max(0, min(m.logScroll, m.logViewBottom()))
 		}
 	}
 
@@ -1128,7 +1218,8 @@ func (m Model) View() string {
 					lines = append(lines, wrapLine(line, width))
 				}
 			}
-			lines = append(lines, "", dimStyle.Render("Press r to retry, enter/q to exit."))
+			lines = append(lines, "", dimStyle.Render("Full log: "+installLogPath(m.installCfg.Directory)))
+			lines = append(lines, "", dimStyle.Render("Press r to retry, "+viewLogKey+" to view the full log, enter/q to exit."))
 			b.WriteString(boxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, lines...)))
 		} else {
 			lines := m.successSummaryLines()
@@ -1138,6 +1229,19 @@ func (m Model) View() string {
 			lines = append(lines, "", dimStyle.Render("Press enter to exit."))
 			b.WriteString(boxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, lines...)))
 		}
+		b.WriteString("\n")
+
+	case phaseLogView:
+		lines := m.logViewLines()
+		start := max(0, min(m.logScroll, m.logViewBottom()))
+		end := min(len(lines), start+m.logViewRows())
+		b.WriteString(fmt.Sprintf("Install log · %s\n\n", installLogPath(m.installCfg.Directory)))
+		for _, line := range lines[start:end] {
+			b.WriteString(line + "\n")
+		}
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render(fmt.Sprintf("lines %d-%d of %d · ↑/↓ PgUp/PgDn g/G to scroll · esc to go back",
+			start+1, end, len(lines))))
 		b.WriteString("\n")
 
 	case phaseError:
