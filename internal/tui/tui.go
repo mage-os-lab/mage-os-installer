@@ -934,12 +934,12 @@ func (m Model) View() string {
 			lines := []string{
 				errorStyle.Render("✗ Installation failed!"),
 				"",
-				truncateLine(m.installErr.Error(), width),
+				wrapLine(m.installErr.Error(), width),
 			}
 			if summary := installErrorSummary(m.logLines); len(summary) > 0 {
 				lines = append(lines, "", dimStyle.Render("What went wrong:"))
 				for _, line := range summary {
-					lines = append(lines, truncateLine(line, width))
+					lines = append(lines, wrapLine(line, width))
 				}
 			}
 			lines = append(lines, "", dimStyle.Render("Press r to retry, enter/q to exit."))
