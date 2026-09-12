@@ -79,6 +79,8 @@ The installer will walk you through:
 5. **Command review** -- inspect the `setup:install` flags before running
 6. **Installation** -- watch progress in real time
 
+Progress is saved to `.mage-os-install.json` in the project directory after every step. If an install stops partway, running the installer again in that directory offers to resume from the first unfinished step; your settings come back pre-filled and only the admin password (and Hyvä token) are asked for again. The file is removed once the install completes.
+
 ## Wishlist
 
 - Save & reuse a config profile (`~/.mage-os-install.yaml`) so re-running skips prompts.

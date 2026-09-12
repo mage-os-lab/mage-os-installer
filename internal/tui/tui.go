@@ -20,6 +20,8 @@ import (
 	"github.com/mage-os/mage-os-install/internal/locale"
 	"github.com/mage-os/mage-os-install/internal/magento"
 	"github.com/mage-os/mage-os-install/internal/prereq"
+
+	"github.com/mage-os/mage-os-install/internal/resume"
 )
 
 type phase int
@@ -33,6 +35,7 @@ const (
 	phaseChecksReview // a prerequisite failed or warned
 	phaseDetecting
 	phaseSelection
+	phaseResumePrompt // an earlier install in this directory can be continued
 	phaseSetupConfig  // admin credentials form
 	phaseSetupPreview // full command preview before running
 	phaseInstalling
@@ -103,6 +106,8 @@ type Model struct {
 	checksDone    bool
 	cursor        int
 	selected      *detector.DetectedEnvironment
+	earlierRun    *resume.State // an unfinished install found in the directory
+	resuming      bool          // the user chose to continue it
 	setupInputs   []textinput.Model
 	setupFocus    int
 	setupError    string
@@ -208,8 +213,12 @@ func (m *Model) enterDirectoryPhase() tea.Cmd {
 // initInstallSteps loads the step list from the selected detector.
 func (m *Model) initInstallSteps() {
 	m.installSteps = nil
-	for _, s := range m.selected.Detector.Steps() {
-		m.installSteps = append(m.installSteps, installStep{name: s.Name, status: stepPending})
+	for i, s := range m.selected.Detector.Steps() {
+		status := stepPending
+		if i < m.installCfg.StartFromStep {
+			status = stepDone // finished by the run being resumed
+		}
+		m.installSteps = append(m.installSteps, installStep{name: s.Name, status: status})
 	}
 }
 
@@ -634,6 +643,9 @@ func (m Model) verifyHyva() (tea.Model, tea.Cmd) {
 func (m Model) showPreview() (tea.Model, tea.Cmd) {
 	m.installCfg = m.buildInstallConfig()
 	m.selected.Detector.PrepareSteps(&m.installCfg)
+	if m.resuming {
+		m.installCfg.StartFromStep = resume.StartIndex(m.earlierRun.Completed, m.selected.Detector.Steps())
+	}
 	m.previewScroll = 0
 	m.phase = phaseSetupPreview
 	return m, nil
@@ -697,6 +709,13 @@ func (m *Model) buildInstallConfig() detector.Config {
 // how many environments were detected. The caller must have already
 // populated m.envs.
 func (m *Model) advanceFromDetection() tea.Cmd {
+	if env := m.environmentOfEarlierRun(); env != nil {
+		m.selected = env
+		m.phase = phaseResumePrompt
+		return nil
+	}
+	m.earlierRun = nil // the run's environment is gone; nothing to continue with
+
 	switch len(m.envs) {
 	case 0:
 		m.phase = phaseError
@@ -709,6 +728,84 @@ func (m *Model) advanceFromDetection() tea.Cmd {
 		m.phase = phaseSelection
 	}
 	return nil
+}
+
+// environmentOfEarlierRun finds the detected environment an unfinished run
+// used, if there is one to continue.
+func (m *Model) environmentOfEarlierRun() *detector.DetectedEnvironment {
+	if m.earlierRun == nil {
+		return nil
+	}
+	for i := range m.envs {
+		if m.envs[i].Env.Name == m.earlierRun.Environment {
+			return &m.envs[i]
+		}
+	}
+	return nil
+}
+
+// resumeEarlierRun fills the form from the saved run. The admin password and
+// the Hyvä token were never saved, so those fields wait for the user.
+func (m *Model) resumeEarlierRun() {
+	m.initSetupInputs()
+	for i, f := range setupFieldDefs {
+		if value, ok := m.earlierRun.Fields[f.label]; ok {
+			m.setupInputs[i].SetValue(value)
+		}
+	}
+	m.setupInputs[adminPasswordField].SetValue("")
+	m.installSampleData = m.earlierRun.SampleData
+	m.initGit = m.earlierRun.InitGit
+	m.installHyva = m.earlierRun.Hyva
+	m.hyvaInputs[0].SetValue(m.earlierRun.HyvaRepoURL)
+	m.resuming = true
+	m.focusSetupInput(adminPasswordField)
+	m.phase = phaseSetupConfig
+}
+
+// unfinishedRun loads the state of an earlier install in dir, if any. A state
+// that cannot be read is treated as absent: starting over is the safe default.
+func unfinishedRun(dir string) *resume.State {
+	state, found, err := resume.Load(dir)
+	if err != nil || !found {
+		return nil
+	}
+	return &state
+}
+
+// progress captures the current run for a later one to continue.
+func (m *Model) progress() resume.State {
+	fields := map[string]string{}
+	for i, f := range setupFieldDefs {
+		if i != adminPasswordField {
+			fields[f.label] = m.setupInputs[i].Value()
+		}
+	}
+	state := resume.State{
+		Environment: m.selected.Env.Name,
+		ProjectName: m.installCfg.ProjectName,
+		Fields:      fields,
+		SampleData:  m.installCfg.InstallSampleData,
+		InitGit:     m.installCfg.InitGit,
+		Hyva:        m.installCfg.InstallHyva,
+		HyvaRepoURL: m.installCfg.HyvaRepoURL,
+	}
+	for _, step := range m.installSteps {
+		state.Steps = append(state.Steps, step.name)
+		if step.status == stepDone {
+			state.Completed = append(state.Completed, step.name)
+		}
+	}
+	return state
+}
+
+// saveProgress writes the state after every finished step. Failing to write
+// it costs nothing but a resume, so it is not allowed to fail the install.
+func (m *Model) saveProgress() {
+	if m.selected == nil || m.installCfg.Directory == "" {
+		return
+	}
+	_ = resume.Save(m.installCfg.Directory, m.progress())
 }
 
 func runInstall(d detector.Detector, cfg detector.Config) (<-chan tea.Msg, tea.Cmd) {
@@ -842,6 +939,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.installSteps[msg.index].status = stepDone
 			m.installSteps[msg.index].finishedAt = now()
 		}
+		m.saveProgress()
 		return m, waitForLog(m.logCh)
 
 	case hyvaVerifiedMsg:
@@ -855,6 +953,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case installDoneMsg:
 		m.installErr = msg.err
+		if msg.err == nil {
+			_ = resume.Clear(m.installCfg.Directory)
+		}
 		if msg.err != nil {
 			for i := range m.installSteps {
 				if m.installSteps[i].status == stepRunning {
@@ -892,12 +993,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyMsg:
 			switch msg.String() {
 			case "enter":
+				m.earlierRun = unfinishedRun(m.dirInput.Value())
 				// Installing over an existing directory rewrites its
 				// environment config and copies Mage-OS into it, so a
 				// directory with content gets a look before anything runs.
-				if m.dirContents = existingContents(m.dirInput.Value()); m.dirContents != "" {
-					m.phase = phaseDirectoryConfirm
-					return m, nil
+				// A directory holding an install we can pick up is the
+				// exception: the resume prompt covers that.
+				if m.earlierRun == nil {
+					if m.dirContents = existingContents(m.dirInput.Value()); m.dirContents != "" {
+						m.phase = phaseDirectoryConfirm
+						return m, nil
+					}
 				}
 				return m, m.continueAfterDirectory()
 			default:
@@ -916,9 +1022,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "n", "esc", "backspace":
 				m.phase = phaseDirectoryInput
 				return m, textinput.Blink
+			}
 		}
 	}
-}
 
 	if m.phase == phaseChecksReview {
 		if keyMsg, ok := msg.(tea.KeyMsg); ok {
@@ -932,6 +1038,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				return m, m.continueToEnvironment()
+			}
+		}
+	}
+
+	if m.phase == phaseResumePrompt {
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.String() {
+			case "y", "enter":
+				m.resumeEarlierRun()
+				return m, textinput.Blink
+			case "n":
+				_ = resume.Clear(m.dirInput.Value())
+				m.earlierRun = nil
+				m.initSetupInputs()
+				m.phase = phaseSetupConfig
+				return m, textinput.Blink
 			case "q", "esc":
 				return m, tea.Quit
 			}
@@ -1256,6 +1378,20 @@ func (m Model) View() string {
 		}
 		b.WriteString("\n")
 		b.WriteString(dimStyle.Render("↑/↓ to move, enter to select, q to quit"))
+
+	case phaseResumePrompt:
+		run := m.earlierRun
+		lines := []string{
+			highlightStyle.Render(fmt.Sprintf("An earlier install of %s in this directory did not finish.", run.ProjectName)),
+			"",
+			fmt.Sprintf("  %d of %d steps were done; the next one is %s.", len(run.Completed), len(run.Steps), highlightStyle.Render(run.NextStep())),
+			"",
+			"Resume from there? Your settings are kept; the admin password is asked for again.",
+			"",
+			dimStyle.Render("y to resume · n to start over · q to quit"),
+		}
+		b.WriteString(boxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, lines...)))
+		b.WriteString("\n")
 
 	case phaseSetupConfig:
 		b.WriteString("Configure Mage-OS:\n\n")
