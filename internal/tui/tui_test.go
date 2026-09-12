@@ -1353,3 +1353,67 @@ func TestAdminURL_DoesNotDoubleTheSlash(t *testing.T) {
 		t.Errorf("adminURL() = %q, expected %q", got, "https://app.shop.test/backend")
 	}
 }
+
+// --- password hint and reveal ---
+
+// TestPassword_HintNamesTheDefaultWhileItIsUntouched verifies a masked default
+// is not a mystery: the hint prints it until the user types something else.
+func TestPassword_HintNamesTheDefaultWhileItIsUntouched(t *testing.T) {
+	m := advanceToSetupConfig(t)
+
+	if view := m.View(); !contains(view, "default: "+setupFieldDefaults[adminPasswordField]) {
+		t.Error("setup form should name the default password while it is still in the field")
+	}
+
+	m.setupInputs[adminPasswordField].SetValue("Wachtwoord123")
+	if view := m.View(); contains(view, "default: ") {
+		t.Error("setup form should stop naming the default once the password was changed")
+	}
+}
+
+// TestPassword_IsMaskedUntilRevealed verifies ctrl+r shows the clear text and
+// pressing it again masks it.
+func TestPassword_IsMaskedUntilRevealed(t *testing.T) {
+	m := advanceToSetupConfig(t)
+	m.setupInputs[adminPasswordField].SetValue("Wachtwoord123")
+
+	if contains(m.View(), "Wachtwoord123") {
+		t.Fatal("password should be masked by default")
+	}
+
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyCtrlR})
+	if !contains(m.View(), "Wachtwoord123") {
+		t.Error("ctrl+r should reveal the password")
+	}
+	if !contains(m.View(), revealPasswordKey+" to hide") {
+		t.Error("hint should offer to hide the password again")
+	}
+
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyCtrlR})
+	if contains(m.View(), "Wachtwoord123") {
+		t.Error("ctrl+r a second time should mask the password again")
+	}
+}
+
+// TestPassword_RevealWorksFromAnyField verifies the toggle is not tied to the
+// password field having focus.
+func TestPassword_RevealWorksFromAnyField(t *testing.T) {
+	m := advanceToSetupConfig(t)
+	m.setupInputs[adminPasswordField].SetValue("Wachtwoord123")
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
+
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyCtrlR})
+
+	if !contains(m.View(), "Wachtwoord123") {
+		t.Error("ctrl+r should reveal the password from another field too")
+	}
+}
+
+// TestPassword_HintStillStatesTheRules verifies the rules line survived the
+// added hints.
+func TestPassword_HintStillStatesTheRules(t *testing.T) {
+	if view := advanceToSetupConfig(t).View(); !contains(view, magento.AdminPasswordHint()) {
+		t.Error("setup form should still state the password rules")
+	}
+}

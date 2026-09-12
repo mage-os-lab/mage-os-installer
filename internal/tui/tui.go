@@ -90,6 +90,9 @@ type Model struct {
 	installErr    error
 	browserOpened bool
 
+	// passwordRevealed shows the admin password in clear text on the form.
+	passwordRevealed bool
+
 	// Optional feature toggles and Hyvä credentials
 	installSampleData bool
 	initGit           bool
@@ -353,6 +356,38 @@ func setupFlagValue(flags []detector.SetupFlag, name string) string {
 	return ""
 }
 
+// revealPasswordKey toggles the admin password between masked and clear text.
+const revealPasswordKey = "ctrl+r"
+
+// togglePasswordReveal flips the password field between masked and clear text.
+// The value is a development login the user typed (or accepted) a moment ago,
+// and the command preview prints it anyway, so hiding it is a courtesy for
+// shared screens rather than a security boundary.
+func (m *Model) togglePasswordReveal() {
+	m.passwordRevealed = !m.passwordRevealed
+	if m.passwordRevealed {
+		m.setupInputs[adminPasswordField].EchoMode = textinput.EchoNormal
+		return
+	}
+	m.setupInputs[adminPasswordField].EchoMode = textinput.EchoPassword
+}
+
+// passwordHints explain the rules, name the default while it is still in the
+// field (a masked default is otherwise unknowable), and say how to reveal it.
+func (m *Model) passwordHints() []string {
+	hints := []string{magento.AdminPasswordHint()}
+
+	value := m.setupInputs[adminPasswordField].Value()
+	usage := revealPasswordKey + " to show"
+	if m.passwordRevealed {
+		usage = revealPasswordKey + " to hide"
+	}
+	if value == setupFieldDefaults[adminPasswordField] && !m.passwordRevealed {
+		usage = "default: " + value + " · " + usage
+	}
+	return append(hints, usage)
+}
+
 // errorLineWidth is how much room a line has inside the bordered box:
 // the window minus its border and padding.
 func (m *Model) errorLineWidth() int {
@@ -587,6 +622,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			switch keyMsg.String() {
+			case revealPasswordKey:
+				m.togglePasswordReveal()
+				return m, nil
 			case "tab", "down":
 				newPos := absPos + 1
 				if newPos >= totalFields {
@@ -819,9 +857,10 @@ func (m Model) View() string {
 			b.WriteString(m.setupInputs[i].View())
 			b.WriteString("\n")
 			if i == adminPasswordField {
-				b.WriteString(dimStyle.Render(fmt.Sprintf("  %-*s  %s",
-					labelWidth, "", magento.AdminPasswordHint())))
-				b.WriteString("\n")
+				for _, hint := range m.passwordHints() {
+					b.WriteString(dimStyle.Render(fmt.Sprintf("  %-*s  %s", labelWidth, "", hint)))
+					b.WriteString("\n")
+				}
 			}
 		}
 		b.WriteString("\n")
@@ -892,7 +931,7 @@ func (m Model) View() string {
 		if m.setupError != "" {
 			b.WriteString(errorStyle.Render("  ✗ "+m.setupError) + "\n\n")
 		}
-		b.WriteString(dimStyle.Render("Tab/↑↓/Enter to move · Space to toggle options · Enter to review command · ctrl+c to quit"))
+		b.WriteString(dimStyle.Render("Tab/↑↓/Enter to move · Space to toggle options · " + revealPasswordKey + " to show/hide password · Enter to review command · ctrl+c to quit"))
 
 	case phaseSetupPreview:
 		b.WriteString("Review the setup command:\n\n")
