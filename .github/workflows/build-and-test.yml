@@ -96,6 +96,9 @@ jobs:
           HYVA: ${{ matrix.hyva }}
           HYVA_REPO_URL: ${{ secrets.HYVA_REPO_URL }}
           HYVA_AUTH_TOKEN: ${{ secrets.HYVA_AUTH_TOKEN }}
+          # "ddev add-on get" calls the GitHub API, and 60 anonymous requests an
+          # hour do not survive four add-ons across the matrix.
+          DDEV_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           sudo apt-get install -y expect
           expect <<'EXPECT_EOF'
