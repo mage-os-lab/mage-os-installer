@@ -16,6 +16,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mage-os/mage-os-install/internal/detector"
 	"github.com/mage-os/mage-os-install/internal/hyva"
+
+	"github.com/mage-os/mage-os-install/internal/locale"
 	"github.com/mage-os/mage-os-install/internal/magento"
 	"github.com/mage-os/mage-os-install/internal/prereq"
 )
@@ -221,6 +223,9 @@ var setupFieldDefs = []struct {
 	{label: "Admin email", echo: textinput.EchoNormal},
 	{label: "Admin firstname", echo: textinput.EchoNormal},
 	{label: "Admin lastname", echo: textinput.EchoNormal},
+	{label: "Locale", echo: textinput.EchoNormal},
+	{label: "Timezone", echo: textinput.EchoNormal},
+	{label: "Currency", echo: textinput.EchoNormal},
 }
 
 // Positions of the toggles below the admin fields, in the order they appear on
@@ -243,9 +248,21 @@ const (
 	adminEmailField
 	adminFirstnameField
 	adminLastnameField
+	localeField
+	timezoneField
+	currencyField
 )
 
-var setupFieldDefaults = []string{"admin", "Admin123!Mage", "admin@example.com", "Admin", "User"}
+// setupFieldDefaults pre-fill the form. The store settings come from the
+// machine the installer runs on, so a Dutch developer is offered nl_NL,
+// Europe/Amsterdam and EUR rather than having to know to change them.
+var setupFieldDefaults = defaultSetupValues(locale.Detect())
+
+// defaultSetupValues lists the defaults in setupFieldDefs order.
+func defaultSetupValues(store locale.Defaults) []string {
+	return []string{"admin", "Admin123!Mage", "admin@example.com", "Admin", "User",
+		store.Locale, store.Timezone, store.Currency}
+}
 
 // Positions of the fields in hyvaFieldDefs and hyvaInputs.
 const (
@@ -622,6 +639,25 @@ func (m Model) showPreview() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// invalidStoreSetting checks locale, timezone and currency the way
+// setup:install will, and names the first field that would fail.
+func (m *Model) invalidStoreSetting() (int, error) {
+	checks := []struct {
+		field    int
+		validate func(string) error
+	}{
+		{localeField, locale.ValidateLocale},
+		{timezoneField, locale.ValidateTimezone},
+		{currencyField, locale.ValidateCurrency},
+	}
+	for _, check := range checks {
+		if err := check.validate(strings.TrimSpace(m.setupInputs[check.field].Value())); err != nil {
+			return check.field, err
+		}
+	}
+	return 0, nil
+}
+
 // errorLineWidth is how much room a line has inside the bordered box:
 // the window minus its border and padding.
 func (m *Model) errorLineWidth() int {
@@ -643,6 +679,9 @@ func (m *Model) buildInstallConfig() detector.Config {
 		AdminEmail:        m.setupInputs[adminEmailField].Value(),
 		AdminFirstname:    m.setupInputs[adminFirstnameField].Value(),
 		AdminLastname:     m.setupInputs[adminLastnameField].Value(),
+		Locale:            m.setupInputs[localeField].Value(),
+		Timezone:          m.setupInputs[timezoneField].Value(),
+		Currency:          m.setupInputs[currencyField].Value(),
 		InstallSampleData: m.installSampleData,
 		InitGit:           m.initGit,
 		InstallHyva:       m.installHyva,
@@ -989,6 +1028,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.focusAbsolutePos(adminPasswordField)
 						return m, textinput.Blink
 					}
+					if field, err := m.invalidStoreSetting(); err != nil {
+						m.setupError = err.Error()
+						m.focusAbsolutePos(field)
+						return m, textinput.Blink
+					}
 					// Validate Hyva fields if enabled
 					if m.installHyva {
 						for i, f := range hyvaFieldDefs {
@@ -1225,6 +1269,14 @@ func (m Model) View() string {
 					b.WriteString(dimStyle.Render(fmt.Sprintf("  %-*s  %s", labelWidth, "", hint)))
 					b.WriteString("\n")
 				}
+			}
+			if i == adminLastnameField {
+				b.WriteString("\n")
+			}
+			if i == currencyField {
+				b.WriteString(dimStyle.Render(fmt.Sprintf("  %-*s  %s",
+					labelWidth, "", "detected from this machine; the store's language, clock and currency")))
+				b.WriteString("\n")
 			}
 		}
 		b.WriteString("\n")

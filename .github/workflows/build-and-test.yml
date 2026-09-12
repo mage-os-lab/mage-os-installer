@@ -139,6 +139,13 @@ jobs:
           sleep 0.3
           # Admin lastname (default: User)
           send "\r"
+          sleep 0.3
+          # Locale, timezone and currency (detected from the runner)
+          send "\r"
+          sleep 0.3
+          send "\r"
+          sleep 0.3
+          send "\r"
 
           # Sample data toggle
           sleep 0.3
@@ -370,6 +377,13 @@ jobs:
           send "\r"
           sleep 0.3
           # Admin lastname (default: User)
+          send "\r"
+          sleep 0.3
+          # Locale, timezone and currency (detected from the runner)
+          send "\r"
+          sleep 0.3
+          send "\r"
+          sleep 0.3
           send "\r"
 
           # Sample data toggle
