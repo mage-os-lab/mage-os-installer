@@ -15,6 +15,8 @@ import (
 	"github.com/mage-os/mage-os-install/internal/locale"
 	"github.com/mage-os/mage-os-install/internal/magento"
 	"github.com/mage-os/mage-os-install/internal/prereq"
+
+	"github.com/mage-os/mage-os-install/internal/resume"
 )
 
 // mockDetector satisfies the detector.Detector interface for tests.
@@ -2225,5 +2227,202 @@ func TestStoreSettings_BadCurrencyStaysOnTheForm(t *testing.T) {
 
 	if m.phase != phaseSetupConfig || m.setupFocus != currencyField {
 		t.Errorf("expected to stay on the form at the currency field, got phase %d focus %d", m.phase, m.setupFocus)
+	}
+}
+
+// --- resume across runs ---
+
+var resumeSteps = []detector.Step{{Name: "Configure"}, {Name: "Start"}, {Name: "Install Mage-OS"}, {Name: "Verify installation"}}
+
+// installingIn drives a fresh model into a running install in dir, with the
+// mock detector reporting resumeSteps.
+func installingIn(t *testing.T, dir string) Model {
+	t.Helper()
+	m := passChecks(pressEnter(New()))
+	env := makeDetectedEnv("DDEV")
+	env.Detector.(*mockDetector).steps = resumeSteps
+	m = sendMsg(m, detectionDoneMsg{envs: []detector.DetectedEnvironment{env}})
+	m.dirInput.SetValue(dir)
+	m = pressEnter(m)
+	totalFields := len(m.setupInputs) + toggleCount
+	for i := 0; i < totalFields-1; i++ {
+		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
+	}
+	m = pressEnter(m) // → preview
+	if m.phase != phaseSetupPreview {
+		t.Fatalf("expected phaseSetupPreview, got %d (%s)", m.phase, m.setupError)
+	}
+	m.initInstallSteps()
+	m.phase = phaseInstalling
+	return m
+}
+
+// TestResume_ProgressIsSavedAfterEachStepWithoutThePassword verifies the
+// state file tracks finished steps and carries settings but no secrets.
+func TestResume_ProgressIsSavedAfterEachStepWithoutThePassword(t *testing.T) {
+	dir := t.TempDir()
+	m := installingIn(t, dir)
+
+	m = sendMsg(m, stepDoneMsg{index: 0})
+	m = sendMsg(m, stepDoneMsg{index: 1})
+
+	state, found, err := resume.Load(dir)
+	if err != nil || !found {
+		t.Fatalf("expected a state file, found=%v err=%v", found, err)
+	}
+	if len(state.Completed) != 2 || state.Completed[1] != "Start" {
+		t.Errorf("Completed = %q, expected the two finished steps", state.Completed)
+	}
+	if state.Fields["Admin user"] != "admin" || state.Environment != "DDEV" {
+		t.Errorf("state should carry the settings, got %+v", state)
+	}
+	if _, saved := state.Fields["Admin password"]; saved {
+		t.Error("the admin password must never be saved")
+	}
+}
+
+// TestResume_AFinishedInstallForgetsTheState verifies nothing is left to
+// resume after success.
+func TestResume_AFinishedInstallForgetsTheState(t *testing.T) {
+	dir := t.TempDir()
+	m := installingIn(t, dir)
+	m = sendMsg(m, stepDoneMsg{index: 0})
+
+	m = sendMsg(m, installDoneMsg{})
+
+	if _, found, _ := resume.Load(dir); found {
+		t.Error("state file should be removed once the install completes")
+	}
+}
+
+// unfinishedIn leaves the state of a run that stopped after two steps in dir.
+func unfinishedIn(t *testing.T, dir string) {
+	t.Helper()
+	err := resume.Save(dir, resume.State{
+		Environment: "DDEV", ProjectName: "shop",
+		Fields:    map[string]string{"Admin user": "michiel", "Admin email": "m@example.com", "Admin firstname": "Michiel", "Admin lastname": "G"},
+		InitGit:   true,
+		Steps:     []string{"Configure", "Start", "Install Mage-OS", "Verify installation"},
+		Completed: []string{"Configure", "Start"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// atResumePrompt drives a fresh model to the resume question for dir.
+func atResumePrompt(t *testing.T, dir string) Model {
+	t.Helper()
+	m := passChecks(pressEnter(New()))
+	env := makeDetectedEnv("DDEV")
+	env.Detector.(*mockDetector).steps = resumeSteps
+	m = sendMsg(m, detectionDoneMsg{envs: []detector.DetectedEnvironment{env}})
+	m.dirInput.SetValue(dir)
+	m = pressEnter(m)
+	if m.phase != phaseResumePrompt {
+		t.Fatalf("expected phaseResumePrompt, got %d", m.phase)
+	}
+	return m
+}
+
+// TestResume_IsOfferedWhenTheDirectoryHasAnUnfinishedRun verifies the prompt
+// and what it says.
+func TestResume_IsOfferedWhenTheDirectoryHasAnUnfinishedRun(t *testing.T) {
+	dir := t.TempDir()
+	unfinishedIn(t, dir)
+
+	view := atResumePrompt(t, dir).View()
+
+	for _, want := range []string{"earlier install of shop", "2 of 4 steps", "Install Mage-OS", "admin password is asked for again", "y to resume"} {
+		if !contains(view, want) {
+			t.Errorf("resume prompt should contain %q", want)
+		}
+	}
+}
+
+// TestResume_YesRestoresTheSettingsAndStartsAtTheNextStep verifies the form
+// comes back filled, the password does not, and the install skips what is
+// done.
+func TestResume_YesRestoresTheSettingsAndStartsAtTheNextStep(t *testing.T) {
+	dir := t.TempDir()
+	unfinishedIn(t, dir)
+	m := atResumePrompt(t, dir)
+
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+
+	if m.phase != phaseSetupConfig {
+		t.Fatalf("expected phaseSetupConfig, got %d", m.phase)
+	}
+	if m.setupInputs[adminUserField].Value() != "michiel" || m.setupInputs[adminEmailField].Value() != "m@example.com" {
+		t.Error("admin fields should be restored from the earlier run")
+	}
+	if m.setupInputs[adminPasswordField].Value() != "" || m.setupFocus != adminPasswordField {
+		t.Error("the password should be empty and focused, waiting for the user")
+	}
+	if !m.initGit {
+		t.Error("toggles should be restored")
+	}
+
+	m.setupInputs[adminPasswordField].SetValue("Wachtwoord123")
+	m.focusAbsolutePos(0) // focus was left on the password field; count tabs from the top
+	totalFields := len(m.setupInputs) + toggleCount
+	for i := 0; i < totalFields-1; i++ {
+		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
+	}
+	m = pressEnter(m)
+
+	if m.phase != phaseSetupPreview || m.installCfg.StartFromStep != 2 {
+		t.Errorf("expected the preview with StartFromStep 2, got phase %d start %d (%s)", m.phase, m.installCfg.StartFromStep, m.setupError)
+	}
+	m.initInstallSteps()
+	if m.installSteps[0].status != stepDone || m.installSteps[1].status != stepDone || m.installSteps[2].status != stepPending {
+		t.Error("the finished steps should show as done and the rest as pending")
+	}
+}
+
+// TestResume_NoStartsOverAndForgetsTheRun verifies declining clears the file
+// and gives a default form.
+func TestResume_NoStartsOverAndForgetsTheRun(t *testing.T) {
+	dir := t.TempDir()
+	unfinishedIn(t, dir)
+	m := atResumePrompt(t, dir)
+
+	m = sendMsg(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+
+	if m.phase != phaseSetupConfig || m.resuming {
+		t.Errorf("expected a fresh form, got phase %d resuming=%v", m.phase, m.resuming)
+	}
+	if m.setupInputs[adminUserField].Value() != "admin" {
+		t.Error("the form should have its defaults, not the earlier run's values")
+	}
+	if _, found, _ := resume.Load(dir); found {
+		t.Error("declining should remove the state file")
+	}
+}
+
+// TestResume_NotOfferedWhenTheEnvironmentIsGone verifies a run made with an
+// environment that is no longer detected falls back to the normal flow.
+func TestResume_NotOfferedWhenTheEnvironmentIsGone(t *testing.T) {
+	dir := t.TempDir()
+	unfinishedIn(t, dir)
+	m := passChecks(pressEnter(New()))
+	m = sendMsg(m, detectionDoneMsg{envs: []detector.DetectedEnvironment{makeDetectedEnv("Warden")}})
+	m.dirInput.SetValue(dir)
+
+	m = pressEnter(m)
+
+	if m.phase != phaseSetupConfig || m.earlierRun != nil {
+		t.Errorf("expected the normal setup form, got phase %d earlierRun=%v", m.phase, m.earlierRun)
+	}
+}
+
+// TestResume_NoStateMeansNoQuestion verifies the common case is untouched.
+func TestResume_NoStateMeansNoQuestion(t *testing.T) {
+	m := passChecks(pressEnter(New()))
+	m = sendMsg(m, detectionDoneMsg{envs: []detector.DetectedEnvironment{makeDetectedEnv("DDEV")}})
+	m.dirInput.SetValue(t.TempDir())
+
+	if m = pressEnter(m); m.phase != phaseSetupConfig {
+		t.Errorf("expected phaseSetupConfig, got %d", m.phase)
 	}
 }

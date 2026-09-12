@@ -88,7 +88,7 @@ func TestGitignore_TracksTheModuleList(t *testing.T) {
 }
 
 func TestGitignore_IgnoresTheDevFolderAndTheDeploymentConfig(t *testing.T) {
-	for _, want := range []string{"/dev", "/app/etc/env.php", "/vendor/*", "/generated/*", "/var/*", "/.mage-os-install.log"} {
+	for _, want := range []string{"/dev", "/app/etc/env.php", "/vendor/*", "/generated/*", "/var/*", "/.mage-os-install.log", "/.mage-os-install.json"} {
 		if !containsLine(gitignore, want) {
 			t.Errorf("expected .gitignore to contain %q", want)
 		}
