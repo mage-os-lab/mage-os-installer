@@ -157,8 +157,9 @@ jobs:
           sleep 0.3
 
           # Git toggle (on by default: git init is skipped inside this checkout,
-          # so the step only writes a .gitignore)
-          send "\t"
+          # so the step only writes a .gitignore). Enter on it leaves the
+          # options screen for the Hyvä screen.
+          send "\r"
           sleep 0.3
 
           # Hyvä toggle
@@ -396,8 +397,9 @@ jobs:
           sleep 0.3
 
           # Git toggle (on by default: git init is skipped inside this checkout,
-          # so the step only writes a .gitignore)
-          send "\t"
+          # so the step only writes a .gitignore). Enter on it leaves the
+          # options screen for the Hyvä screen.
+          send "\r"
           sleep 0.3
 
           # Hyvä toggle
