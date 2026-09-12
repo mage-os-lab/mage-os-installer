@@ -4,6 +4,10 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  # Once a week, so breakage in Mage-OS, Hyvä, DDEV or Warden surfaces here
+  # rather than in someone's first install.
+  schedule:
+    - cron: '17 6 * * 1'
 
 permissions:
   contents: write
@@ -234,6 +238,17 @@ jobs:
             echo "=== Container: $(docker inspect --format '{{.Name}}' $c) ==="
             docker logs --tail 50 $c 2>&1 || true
           done
+          cd test-mageos || exit 0
+          echo "------- Magento logs -------"
+          for f in var/log/exception.log var/log/system.log; do
+            echo "=== $f ==="
+            ddev exec --raw -- tail -n 40 "$f" 2>&1 || true
+          done
+          echo "------- Newest error report -------"
+          ddev exec --raw -- bash -c 'r=$(ls -t var/report/ 2>/dev/null | head -n 1); [ -n "$r" ] && head -n 60 "var/report/$r"' 2>&1 || true
+          echo "------- Theme configuration -------"
+          ddev mysql -N -e "SELECT path, value FROM core_config_data WHERE path LIKE 'design/theme%'" 2>&1 || true
+          ddev mysql -N -e "SELECT theme_id, theme_path, area FROM theme" 2>&1 || true
 
   warden-test:
     runs-on: ubuntu-latest
@@ -452,6 +467,22 @@ jobs:
             echo "=== Container: $(docker inspect --format '{{.Name}}' $c) ==="
             docker logs --tail 50 $c 2>&1 || true
           done
+          echo "------- Container user and Composer home -------"
+          (cd test-mageos && /opt/warden/bin/warden env exec -T php-fpm id) 2>&1 || true
+          (cd test-mageos && /opt/warden/bin/warden env exec -T php-fpm ls -lnd /home/www-data /home/www-data/.composer) 2>&1 || true
+          echo "------- Storefront response -------"
+          curl -sSk -D - -o - https://app.test-mageos.test/ 2>&1 | head -n 40 || true
+          cd test-mageos || exit 0
+          echo "------- Magento logs -------"
+          for f in var/log/exception.log var/log/system.log; do
+            echo "=== $f ==="
+            /opt/warden/bin/warden env exec -T php-fpm tail -n 40 "$f" 2>&1 || true
+          done
+          echo "------- Newest error report -------"
+          /opt/warden/bin/warden env exec -T php-fpm bash -c 'r=$(ls -t var/report/ 2>/dev/null | head -n 1); [ -n "$r" ] && head -n 60 "var/report/$r"' 2>&1 || true
+          echo "------- Theme configuration -------"
+          /opt/warden/bin/warden env exec -T db mysql -u magento -pmagento magento -N -e "SELECT path, value FROM core_config_data WHERE path LIKE 'design/theme%'" 2>&1 || true
+          /opt/warden/bin/warden env exec -T db mysql -u magento -pmagento magento -N -e "SELECT theme_id, theme_path, area FROM theme" 2>&1 || true
 
   release:
     runs-on: ubuntu-latest

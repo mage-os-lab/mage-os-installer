@@ -33,7 +33,7 @@ func (d *WardenDetector) buildSteps(config *Config) {
 		{Name: "Initialize Warden environment"},
 		{Name: "Sign SSL certificates"},
 		{Name: "Start environment"},
-		{Name: "Copy auth.json"},
+		{Name: "Prepare Composer home"},
 		{Name: "Create Mage-OS project"},
 		{Name: "Create composer home directory"},
 		{Name: "Copy auth.json to composer home"},
@@ -132,8 +132,11 @@ func (d *WardenDetector) Install(config *Config) error {
 		func() error {
 			return run("warden", "env", "up")
 		},
-		// 3: Copy auth.json
+		// 3: Prepare Composer home
 		func() error {
+			if err := wardenPrepareComposerHome(config); err != nil {
+				return err
+			}
 			return wardenCopyAuthJSON(config)
 		},
 		// 4: Create Mage-OS project
@@ -370,6 +373,20 @@ func wardenPhpFpmContainer(dir string) (string, error) {
 		return "", fmt.Errorf("php-fpm container not found")
 	}
 	return containerID, nil
+}
+
+// wardenPrepareComposerHome makes Composer's home directory inside the
+// container writable by the user php-fpm runs as. Warden remaps www-data to the
+// host user id, so the /home/www-data baked into the image can belong to
+// somebody else, and Composer writes a .htaccess into its home on every call.
+// Hyvä asks Magento for the product version while rendering a template, which
+// goes through Composer, so an unwritable home turns every storefront page into
+// a 500.
+func wardenPrepareComposerHome(config *Config) error {
+	logf(config, "▸ Making Composer home writable for php-fpm")
+	return runInDir(config.Directory, config.Log,
+		"warden", "env", "exec", "--user", "root", "php-fpm",
+		"bash", "-c", "mkdir -p /home/www-data/.composer && chown -R www-data:www-data /home/www-data/.composer")
 }
 
 // wardenCopyAuthJSON copies ~/.composer/auth.json into the Warden php-fpm container.
