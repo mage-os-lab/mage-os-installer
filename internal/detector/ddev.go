@@ -292,9 +292,7 @@ func (d *DdevDetector) Install(config *Config) error {
 		gitIdx := nextIdx
 		if gitIdx >= config.StartFromStep {
 			stepStart(config, gitIdx)
-			if err := initGitRepository(config); err != nil {
-				return fmt.Errorf("git init failed: %w", err)
-			}
+			initGitRepository(config)
 			stepDone(config, gitIdx)
 		}
 	}
