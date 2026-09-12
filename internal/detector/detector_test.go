@@ -706,3 +706,18 @@ func TestSteps_SlowStepsCarryAnEstimate(t *testing.T) {
 		}
 	}
 }
+
+// --- store settings ---
+
+// TestSetupInstallFlags_StoreSettingsComeFromTheConfig verifies neither
+// environment hardcodes a timezone or currency any more.
+func TestSetupInstallFlags_StoreSettingsComeFromTheConfig(t *testing.T) {
+	cfg := &Config{ProjectName: "test-project", Locale: "de_DE", Timezone: "Europe/Berlin", Currency: "CHF"}
+	for name, d := range map[string]Detector{"DDEV": &DdevDetector{}, "Warden": &WardenDetector{}} {
+		assertFlags(t, d.SetupInstallFlags(cfg), map[string]string{
+			"--language": "de_DE",
+			"--timezone": "Europe/Berlin",
+			"--currency": "CHF",
+		}, name+" store settings")
+	}
+}

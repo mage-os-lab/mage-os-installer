@@ -11,6 +11,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mage-os/mage-os-install/internal/detector"
 	"github.com/mage-os/mage-os-install/internal/hyva"
+
+	"github.com/mage-os/mage-os-install/internal/locale"
 	"github.com/mage-os/mage-os-install/internal/magento"
 	"github.com/mage-os/mage-os-install/internal/prereq"
 )
@@ -2126,5 +2128,102 @@ func TestHyva_NoCheckWhenHyvaIsOff(t *testing.T) {
 
 	if m.verifyingHyva {
 		t.Error("no Hyvä, no credential check")
+	}
+}
+
+// --- store settings on the form ---
+
+// TestStoreSettings_AreOnTheForm verifies the three fields show up with
+// non-empty defaults.
+func TestStoreSettings_AreOnTheForm(t *testing.T) {
+	m := advanceToSetupConfig(t)
+	view := m.View()
+
+	for _, want := range []string{"Locale", "Timezone", "Currency"} {
+		if !contains(view, want) {
+			t.Errorf("setup form should show a %s field", want)
+		}
+	}
+	for _, field := range []int{localeField, timezoneField, currencyField} {
+		if m.setupInputs[field].Value() == "" {
+			t.Errorf("field %d should have a detected or fallback default", field)
+		}
+	}
+}
+
+// TestStoreSettings_DefaultsFollowTheMachine verifies the defaults come from
+// locale detection rather than a hardcoded Dutch setup.
+func TestStoreSettings_DefaultsFollowTheMachine(t *testing.T) {
+	values := defaultSetupValues(locale.Defaults{Locale: "de_DE", Timezone: "Europe/Berlin", Currency: "EUR"})
+
+	if values[localeField] != "de_DE" || values[timezoneField] != "Europe/Berlin" || values[currencyField] != "EUR" {
+		t.Errorf("defaultSetupValues() = %q, expected the detected store settings in place", values)
+	}
+	if len(values) != len(setupFieldDefs) {
+		t.Errorf("defaults have %d entries for %d fields", len(values), len(setupFieldDefs))
+	}
+}
+
+// TestStoreSettings_ReachTheInstallCommand verifies what the user typed ends up
+// in the setup:install flags of both environments.
+func TestStoreSettings_ReachTheInstallCommand(t *testing.T) {
+	m := advanceToSetupConfig(t)
+	m.setupInputs[localeField].SetValue("nl_NL")
+	m.setupInputs[timezoneField].SetValue("Europe/Amsterdam")
+	m.setupInputs[currencyField].SetValue("EUR")
+	totalFields := len(m.setupInputs) + toggleCount
+	for i := 0; i < totalFields-1; i++ {
+		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
+	}
+	m = pressEnter(m)
+	if m.phase != phaseSetupPreview {
+		t.Fatalf("expected phaseSetupPreview, got %d (%s)", m.phase, m.setupError)
+	}
+
+	for name, d := range map[string]detector.Detector{"DDEV": &detector.DdevDetector{}, "Warden": &detector.WardenDetector{}} {
+		flags := d.SetupInstallFlags(&m.installCfg)
+		got := map[string]string{}
+		for _, f := range flags {
+			got[f.Flag] = f.Value
+		}
+		if got["--language"] != "nl_NL" || got["--timezone"] != "Europe/Amsterdam" || got["--currency"] != "EUR" {
+			t.Errorf("[%s] flags = language %q timezone %q currency %q", name, got["--language"], got["--timezone"], got["--currency"])
+		}
+	}
+}
+
+// TestStoreSettings_BadTimezoneStaysOnTheForm verifies a zone Magento would
+// refuse is caught here, with focus on the field.
+func TestStoreSettings_BadTimezoneStaysOnTheForm(t *testing.T) {
+	m := advanceToSetupConfig(t)
+	m.setupInputs[timezoneField].SetValue("Amsterdam")
+	totalFields := len(m.setupInputs) + toggleCount
+	for i := 0; i < totalFields-1; i++ {
+		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
+	}
+
+	m = pressEnter(m)
+
+	if m.phase != phaseSetupConfig {
+		t.Fatalf("expected to stay on the form, got phase %d", m.phase)
+	}
+	if !contains(m.setupError, "Timezone must be") || m.setupFocus != timezoneField {
+		t.Errorf("setupError = %q focus = %d, expected the timezone rule with focus on the field", m.setupError, m.setupFocus)
+	}
+}
+
+// TestStoreSettings_BadCurrencyStaysOnTheForm verifies the currency rule.
+func TestStoreSettings_BadCurrencyStaysOnTheForm(t *testing.T) {
+	m := advanceToSetupConfig(t)
+	m.setupInputs[currencyField].SetValue("euro")
+	totalFields := len(m.setupInputs) + toggleCount
+	for i := 0; i < totalFields-1; i++ {
+		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
+	}
+
+	m = pressEnter(m)
+
+	if m.phase != phaseSetupConfig || m.setupFocus != currencyField {
+		t.Errorf("expected to stay on the form at the currency field, got phase %d focus %d", m.phase, m.setupFocus)
 	}
 }

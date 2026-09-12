@@ -15,6 +15,11 @@ type Config struct {
 	// Used to resume from the failed step on retry.
 	StartFromStep int
 
+	// Store settings
+	Locale   string
+	Timezone string
+	Currency string
+
 	// Mage-OS admin credentials
 	AdminUser      string
 	AdminPassword  string

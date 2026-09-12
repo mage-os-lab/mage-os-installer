@@ -74,8 +74,12 @@ The installer will walk you through:
 6. **Command review** -- inspect the `setup:install` flags before running
 7. **Installation** -- watch progress in real time
 
+3. **Environment selection** -- pick DDEV or Warden (auto-selected if only one is available)
+4. **Admin credentials and store settings** -- the admin user, plus locale, timezone and currency detected from your machine
+5. **Command review** -- inspect the `setup:install` flags before running
+6. **Installation** -- watch progress in real time
+
 ## Wishlist
 
 - Save & reuse a config profile (`~/.mage-os-install.yaml`) so re-running skips prompts.
-- Custom locale / currency / timezone defaults (instead of always en_US).
 - Non-interactive / scripted mode via flags or a config file (useful for CI and demos).
