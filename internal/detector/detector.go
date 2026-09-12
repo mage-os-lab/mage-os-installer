@@ -18,6 +18,9 @@ type Step struct {
 	Name string
 }
 
+// BackendFrontnameFlag is the setup:install flag that decides the admin URL.
+const BackendFrontnameFlag = "--backend-frontname"
+
 // SetupFlag represents one --flag=value argument for bin/magento setup:install.
 type SetupFlag struct {
 	Flag     string
@@ -36,6 +39,9 @@ type Detector interface {
 	Install(config *Config) error
 	// SetupInstallFlags returns the ordered list of flags for bin/magento setup:install.
 	SetupInstallFlags(config *Config) []SetupFlag
+	// MagentoCommand returns how bin/magento is run in this environment
+	// (e.g. "ddev exec --raw -- bin/magento").
+	MagentoCommand() string
 	// SetupCommandPrefix returns the command prefix shown in the setup preview
 	// (e.g. "ddev exec bin/magento setup:install").
 	SetupCommandPrefix() string

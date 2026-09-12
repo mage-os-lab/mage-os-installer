@@ -68,8 +68,12 @@ func (d *DdevDetector) buildSteps(config *Config) {
 	d.steps = append(d.steps, Step{Name: "Verify installation"})
 }
 
+func (d *DdevDetector) MagentoCommand() string {
+	return strings.Join(ddevExecCommand("bin/magento"), " ")
+}
+
 func (d *DdevDetector) SetupCommandPrefix() string {
-	return "ddev exec --raw -- bin/magento setup:install"
+	return d.MagentoCommand() + " setup:install"
 }
 
 func (d *DdevDetector) BaseURL(projectName string) string {
@@ -82,7 +86,7 @@ func (d *DdevDetector) BaseURL(projectName string) string {
 // SetupInstallFlags returns the full ordered list of flags for bin/magento setup:install.
 func (d *DdevDetector) SetupInstallFlags(config *Config) []SetupFlag {
 	return []SetupFlag{
-		{Flag: "--backend-frontname", Value: "admin"},
+		{Flag: BackendFrontnameFlag, Value: "admin"},
 		{Flag: "--amqp-host", Value: "rabbitmq"},
 		{Flag: "--amqp-port", Value: "5672"},
 		{Flag: "--amqp-user", Value: "rabbitmq"},

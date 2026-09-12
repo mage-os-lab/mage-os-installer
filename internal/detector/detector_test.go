@@ -652,3 +652,35 @@ func TestDdevSetupInstallFlags_KeepsSpecialCharactersInThePassword(t *testing.T)
 
 	assertFlags(t, flags, map[string]string{"--admin-password": password}, "special characters")
 }
+
+// --- how bin/magento is run ---
+
+// TestMagentoCommand_IsWhatTheSetupPreviewShows verifies the preview prefix and
+// the command handed to the user after the install are the same thing.
+func TestMagentoCommand_IsWhatTheSetupPreviewShows(t *testing.T) {
+	for name, d := range map[string]Detector{"DDEV": &DdevDetector{}, "Warden": &WardenDetector{}} {
+		if want := d.MagentoCommand() + " setup:install"; d.SetupCommandPrefix() != want {
+			t.Errorf("[%s] SetupCommandPrefix() = %q, want %q", name, d.SetupCommandPrefix(), want)
+		}
+		if !strings.HasSuffix(d.MagentoCommand(), "bin/magento") {
+			t.Errorf("[%s] MagentoCommand() = %q, expected it to end in bin/magento", name, d.MagentoCommand())
+		}
+	}
+}
+
+// TestSetupInstallFlags_NameTheBackendFrontname verifies both environments
+// expose the flag the admin URL is derived from.
+func TestSetupInstallFlags_NameTheBackendFrontname(t *testing.T) {
+	for name, d := range map[string]Detector{"DDEV": &DdevDetector{}, "Warden": &WardenDetector{}} {
+		flags := d.SetupInstallFlags(&Config{ProjectName: "test-project"})
+		found := false
+		for _, f := range flags {
+			if f.Flag == BackendFrontnameFlag && f.Value != "" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("[%s] SetupInstallFlags() has no %s", name, BackendFrontnameFlag)
+		}
+	}
+}

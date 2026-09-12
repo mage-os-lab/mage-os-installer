@@ -27,11 +27,13 @@ func (d *mockDetector) Detect() (*detector.Environment, error) { return d.env, n
 func (d *mockDetector) Install(cfg *detector.Config) error     { return d.installErr }
 func (d *mockDetector) SetupInstallFlags(cfg *detector.Config) []detector.SetupFlag {
 	return []detector.SetupFlag{
+		{Flag: detector.BackendFrontnameFlag, Value: "backend"},
 		{Flag: "--db-host", Value: "db", Editable: false},
 		{Flag: "--admin-user", Value: cfg.AdminUser, Editable: true},
 		{Flag: "--admin-password", Value: cfg.AdminPassword, Editable: true},
 	}
 }
+func (d *mockDetector) MagentoCommand() string     { return "mock exec bin/magento" }
 func (d *mockDetector) SetupCommandPrefix() string { return "mock exec bin/magento setup:install" }
 func (d *mockDetector) BaseURL(projectName string) string {
 	return "https://" + projectName + ".test"
@@ -1274,5 +1276,80 @@ func TestGit_ChoiceReachesTheInstaller(t *testing.T) {
 	m = pressEnter(m)
 	if m.installCfg.InitGit {
 		t.Error("declining Git should be carried into the install config")
+	}
+}
+
+// --- post-install summary ---
+
+// installedModel drives the model to a finished install, so the success
+// screens have a selected environment and an install config to summarise.
+func installedModel(t *testing.T, phase phase) Model {
+	t.Helper()
+	m := advanceToSetupPreview(t)
+	m.phase = phase
+	return m
+}
+
+// TestSuccess_ShowsWhereTheStoreIs verifies the storefront and admin URLs are
+// on screen, with the admin URL built from the environment's front name.
+func TestSuccess_ShowsWhereTheStoreIs(t *testing.T) {
+	m := installedModel(t, phaseOpenBrowser)
+	view := m.View()
+
+	storefront := "https://" + m.installCfg.ProjectName + ".test"
+	for _, want := range []string{"Storefront", storefront, "Admin", storefront + "/backend"} {
+		if !contains(view, want) {
+			t.Errorf("success screen should contain %q", want)
+		}
+	}
+}
+
+// TestSuccess_ShowsTheAdminLogin verifies the credentials are shown, since the
+// password was masked on the form.
+func TestSuccess_ShowsTheAdminLogin(t *testing.T) {
+	m := installedModel(t, phaseOpenBrowser)
+	view := m.View()
+
+	want := m.installCfg.AdminUser + " / " + m.installCfg.AdminPassword
+	if !contains(view, want) {
+		t.Errorf("success screen should contain the login %q", want)
+	}
+}
+
+// TestSuccess_TellsHowToRunMagentoCommands verifies the environment's command
+// prefix and the project directory are on screen.
+func TestSuccess_TellsHowToRunMagentoCommands(t *testing.T) {
+	m := installedModel(t, phaseOpenBrowser)
+	view := m.View()
+
+	for _, want := range []string{"mock exec bin/magento <command>", m.installCfg.Directory} {
+		if !contains(view, want) {
+			t.Errorf("success screen should contain %q", want)
+		}
+	}
+}
+
+// TestSuccess_SummaryStaysAfterTheBrowserQuestion verifies the final screen
+// repeats the summary, so it is still there once the browser prompt is gone.
+func TestSuccess_SummaryStaysAfterTheBrowserQuestion(t *testing.T) {
+	m := installedModel(t, phaseInstallDone)
+	m.browserOpened = true
+	view := m.View()
+
+	adminURL := "https://" + m.installCfg.ProjectName + ".test/backend"
+	for _, want := range []string{adminURL, "Opened the storefront", "Press enter to exit"} {
+		if !contains(view, want) {
+			t.Errorf("final screen should contain %q", want)
+		}
+	}
+}
+
+// TestAdminURL_DoesNotDoubleTheSlash verifies a base URL with a trailing slash,
+// as Warden reports it, still yields a clean admin URL.
+func TestAdminURL_DoesNotDoubleTheSlash(t *testing.T) {
+	m := installedModel(t, phaseOpenBrowser)
+
+	if got := m.adminURL("https://app.shop.test/"); got != "https://app.shop.test/backend" {
+		t.Errorf("adminURL() = %q, expected %q", got, "https://app.shop.test/backend")
 	}
 }
