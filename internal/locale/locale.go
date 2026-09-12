@@ -73,18 +73,34 @@ func localeFromEnv(getenv func(string) string) string {
 	return ""
 }
 
-// timezoneFrom prefers TZ, then the zone /etc/localtime points at.
+// timezoneFrom prefers TZ, then the zone /etc/localtime points at. Either
+// may name UTC in one of its aliases; Magento only knows the plain one.
 func timezoneFrom(getenv func(string) string, localtime string) string {
-	if tz := getenv("TZ"); ValidateTimezone(tz) == nil && tz != "" {
+	if tz := normalizeZone(getenv("TZ")); ValidateTimezone(tz) == nil {
 		return tz
 	}
 	target, err := filepath.EvalSymlinks(localtime)
 	if err != nil {
 		return ""
 	}
-	zone := zoneFromPath(target)
+	zone := normalizeZone(zoneFromPath(target))
 	if ValidateTimezone(zone) != nil {
 		return ""
+	}
+	return zone
+}
+
+// utcAliases are the names systems use for UTC that Magento does not accept.
+// Linux images typically link /etc/localtime to Etc/UTC.
+var utcAliases = map[string]bool{
+	"Etc/UTC": true, "Etc/GMT": true, "Etc/Universal": true, "Etc/Zulu": true, "Etc/UCT": true,
+	"GMT": true, "Universal": true, "Zulu": true, "UCT": true, "Z": true,
+}
+
+// normalizeZone maps every spelling of UTC to the one Magento knows.
+func normalizeZone(zone string) string {
+	if utcAliases[zone] {
+		return "UTC"
 	}
 	return zone
 }
@@ -114,13 +130,19 @@ func ValidateLocale(locale string) error {
 	return nil
 }
 
-// ValidateTimezone accepts any zone the system knows.
+// ValidateTimezone accepts what setup:install accepts: PHP's zone list, which
+// is every Region/City zone plus plain UTC, and none of the Etc/ or legacy
+// aliases Go would happily load.
 func ValidateTimezone(timezone string) error {
-	if timezone == "" || timezone == "Local" {
-		return errors.New("Timezone must be a zone name such as Europe/Amsterdam")
+	invalid := errors.New("Timezone must be a zone such as Europe/Amsterdam, or UTC")
+	if timezone == "UTC" {
+		return nil
+	}
+	if !strings.Contains(timezone, "/") || strings.HasPrefix(timezone, "Etc/") {
+		return invalid
 	}
 	if _, err := time.LoadLocation(timezone); err != nil {
-		return errors.New("Timezone must be a zone name such as Europe/Amsterdam")
+		return invalid
 	}
 	return nil
 }

@@ -78,6 +78,9 @@ func TestValidate_AcceptsWellFormedValues(t *testing.T) {
 	if err := ValidateTimezone("Europe/Amsterdam"); err != nil {
 		t.Error(err)
 	}
+	if err := ValidateTimezone("UTC"); err != nil {
+		t.Error(err)
+	}
 	if err := ValidateCurrency("EUR"); err != nil {
 		t.Error(err)
 	}
@@ -89,7 +92,7 @@ func TestValidate_RejectsMalformedValues(t *testing.T) {
 			t.Errorf("ValidateLocale(%q) should fail", locale)
 		}
 	}
-	for _, tz := range []string{"", "Local", "Amsterdam", "CET+1"} {
+	for _, tz := range []string{"", "Local", "Amsterdam", "CET+1", "Etc/UTC", "GMT", "Etc/GMT+2", "EST"} {
 		if ValidateTimezone(tz) == nil {
 			t.Errorf("ValidateTimezone(%q) should fail", tz)
 		}
@@ -98,5 +101,29 @@ func TestValidate_RejectsMalformedValues(t *testing.T) {
 		if ValidateCurrency(currency) == nil {
 			t.Errorf("ValidateCurrency(%q) should fail", currency)
 		}
+	}
+}
+
+// Linux images link /etc/localtime to Etc/UTC, which Go loads and Magento
+// rejects; the runner found out the hard way.
+func TestDetectFrom_TurnsEtcUTCIntoPlainUTC(t *testing.T) {
+	dir := t.TempDir()
+	zone := filepath.Join(dir, "zoneinfo", "Etc", "UTC")
+	if err := os.MkdirAll(filepath.Dir(zone), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(zone, nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "localtime")
+	if err := os.Symlink(zone, link); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := DetectFrom(env(map[string]string{}), link); got.Timezone != "UTC" {
+		t.Errorf("Timezone = %q, expected UTC", got.Timezone)
+	}
+	if got := DetectFrom(env(map[string]string{"TZ": "Etc/UTC"}), "/nonexistent"); got.Timezone != "UTC" {
+		t.Errorf("Timezone from TZ=Etc/UTC = %q, expected UTC", got.Timezone)
 	}
 }
