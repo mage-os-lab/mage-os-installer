@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mage-os/mage-os-install/internal/detector"
+	"github.com/mage-os/mage-os-install/internal/hyva"
 	"github.com/mage-os/mage-os-install/internal/magento"
 	"github.com/mage-os/mage-os-install/internal/prereq"
 )
@@ -52,6 +53,16 @@ func (d *mockDetector) BaseURL(projectName string) string {
 func sendMsg(m Model, msg tea.Msg) Model {
 	newModel, _ := m.Update(msg)
 	return newModel.(Model)
+}
+
+// awaitInstall lets the install goroutine started by runInstall finish, so a
+// test does not return while it is still writing its log into the temp dir.
+func awaitInstall(m Model) {
+	for msg := range m.logCh {
+		if _, done := msg.(installDoneMsg); done {
+			return
+		}
+	}
 }
 
 func pressEnter(m Model) Model {
@@ -635,6 +646,7 @@ func TestPreview_EnterThenSudoCachedAdvancesToInstall(t *testing.T) {
 	if m.phase != phaseInstalling {
 		t.Errorf("after Enter + sudoCachedMsg, expected phaseInstalling, got %d", m.phase)
 	}
+	awaitInstall(m)
 }
 
 // --- multi-step installation with live logging (US-007) ---
@@ -678,6 +690,7 @@ func advanceToInstalling(t *testing.T, steps []detector.Step) Model {
 	if m.phase != phaseInstalling {
 		t.Fatalf("expected phaseInstalling, got %d", m.phase)
 	}
+	awaitInstall(m)
 	return m
 }
 
@@ -2013,5 +2026,105 @@ func TestChecks_AllPassingNeverShowsAScreen(t *testing.T) {
 
 	if m = confirmDirectory(m); m.phase != phaseSetupConfig {
 		t.Errorf("expected phaseSetupConfig straight away, got %d", m.phase)
+	}
+}
+
+// --- Hyvä credentials are checked on the form ---
+
+// submitWithHyva fills in Hyvä credentials and submits the form.
+func submitWithHyva(t *testing.T, repoURL, token string) (Model, tea.Cmd) {
+	t.Helper()
+	m := advanceToSetupConfig(t)
+	m.installHyva = true
+	m.hyvaInputs[hyvaRepoURLField].SetValue(repoURL)
+	m.hyvaInputs[hyvaAuthTokenField].SetValue(token)
+	totalFields := len(m.setupInputs) + toggleCount + len(m.hyvaInputs)
+	for i := 0; i < totalFields-1; i++ {
+		m = sendMsg(m, tea.KeyMsg{Type: tea.KeyTab})
+	}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	return updated.(Model), cmd
+}
+
+// TestHyva_ABadURLFailsOnTheFormWithoutANetworkCall verifies the URL shape is
+// checked first, synchronously.
+func TestHyva_ABadURLFailsOnTheFormWithoutANetworkCall(t *testing.T) {
+	m, _ := submitWithHyva(t, "hyva-themes.repo.packagist.com/acme", "s3cret")
+
+	if m.phase != phaseSetupConfig || m.verifyingHyva {
+		t.Fatalf("expected to stay on the form without verifying, got phase %d verifying=%v", m.phase, m.verifyingHyva)
+	}
+	if !contains(m.setupError, "Repo URL must be a full URL") {
+		t.Errorf("setupError = %q, expected the URL rule", m.setupError)
+	}
+}
+
+// TestHyva_SubmitChecksTheCredentialsBeforeThePreview verifies submitting
+// starts the check and waits for it instead of jumping to the preview.
+func TestHyva_SubmitChecksTheCredentialsBeforeThePreview(t *testing.T) {
+	m, cmd := submitWithHyva(t, "https://hyva-themes.repo.packagist.com/acme/", "s3cret")
+
+	if m.phase != phaseSetupConfig || !m.verifyingHyva {
+		t.Fatalf("expected the form to wait for the check, got phase %d verifying=%v", m.phase, m.verifyingHyva)
+	}
+	if cmd == nil {
+		t.Error("submit should start the credential check")
+	}
+	if !contains(m.View(), "Checking the Hyvä credentials") {
+		t.Error("form should say it is checking")
+	}
+}
+
+// TestHyva_KeysAreIgnoredWhileChecking verifies the form cannot be resubmitted
+// or edited mid-check.
+func TestHyva_KeysAreIgnoredWhileChecking(t *testing.T) {
+	m, _ := submitWithHyva(t, "https://hyva-themes.repo.packagist.com/acme/", "s3cret")
+
+	m = pressEnter(m)
+
+	if m.phase != phaseSetupConfig || !m.verifyingHyva {
+		t.Errorf("Enter during the check should do nothing, got phase %d verifying=%v", m.phase, m.verifyingHyva)
+	}
+}
+
+// TestHyva_AcceptedCredentialsGoToThePreview verifies the happy path.
+func TestHyva_AcceptedCredentialsGoToThePreview(t *testing.T) {
+	m, _ := submitWithHyva(t, "https://hyva-themes.repo.packagist.com/acme/", "s3cret")
+
+	m = sendMsg(m, hyvaVerifiedMsg{})
+
+	if m.phase != phaseSetupPreview {
+		t.Errorf("expected phaseSetupPreview, got %d", m.phase)
+	}
+	if m.installCfg.HyvaRepoURL != "https://hyva-themes.repo.packagist.com/acme/" || m.installCfg.HyvaAuthToken != "s3cret" {
+		t.Error("install config should carry the Hyvä credentials")
+	}
+}
+
+// TestHyva_RejectedTokenStaysOnTheFormAtTheTokenField verifies the failure is
+// shown where the user can fix it.
+func TestHyva_RejectedTokenStaysOnTheFormAtTheTokenField(t *testing.T) {
+	m, _ := submitWithHyva(t, "https://hyva-themes.repo.packagist.com/acme/", "wrong")
+
+	m = sendMsg(m, hyvaVerifiedMsg{err: hyva.ErrRejected})
+
+	if m.phase != phaseSetupConfig || m.verifyingHyva {
+		t.Fatalf("expected to be back on the form, got phase %d verifying=%v", m.phase, m.verifyingHyva)
+	}
+	if !contains(m.View(), "Hyvä rejected the token") {
+		t.Error("form should show why the check failed")
+	}
+	if !m.inTogglePhase || m.toggleFocus != hyvaAuthTokenField {
+		t.Errorf("focus should be on the token field, got inTogglePhase=%v toggleFocus=%d", m.inTogglePhase, m.toggleFocus)
+	}
+}
+
+// TestHyva_NoCheckWhenHyvaIsOff verifies the plain flow still goes straight to
+// the preview.
+func TestHyva_NoCheckWhenHyvaIsOff(t *testing.T) {
+	m := advanceToSetupPreview(t)
+
+	if m.verifyingHyva {
+		t.Error("no Hyvä, no credential check")
 	}
 }

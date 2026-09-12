@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,6 +15,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mage-os/mage-os-install/internal/detector"
+	"github.com/mage-os/mage-os-install/internal/hyva"
 	"github.com/mage-os/mage-os-install/internal/magento"
 	"github.com/mage-os/mage-os-install/internal/prereq"
 )
@@ -46,6 +48,11 @@ type detectionDoneMsg struct {
 // checksDoneMsg is sent when the prerequisite checks complete.
 type checksDoneMsg struct {
 	results []prereq.Result
+}
+
+// hyvaVerifiedMsg is sent once the Hyvä credentials have been checked.
+type hyvaVerifiedMsg struct {
+	err error
 }
 
 // installDoneMsg is sent when installation completes.
@@ -111,6 +118,9 @@ type Model struct {
 
 	// passwordRevealed shows the admin password in clear text on the form.
 	passwordRevealed bool
+
+	// verifyingHyva is true while the Hyvä credentials are being checked.
+	verifyingHyva bool
 
 	// Optional feature toggles and Hyvä credentials
 	installSampleData bool
@@ -236,6 +246,12 @@ const (
 )
 
 var setupFieldDefaults = []string{"admin", "Admin123!Mage", "admin@example.com", "Admin", "User"}
+
+// Positions of the fields in hyvaFieldDefs and hyvaInputs.
+const (
+	hyvaRepoURLField = iota
+	hyvaAuthTokenField
+)
 
 // hyvaFieldDefs defines the Hyvä credential fields.
 var hyvaFieldDefs = []struct {
@@ -579,6 +595,33 @@ func checkLine(result prereq.Result, nameWidth, detailWidth int) string {
 	}
 }
 
+// verifyHyva checks the URL shape at once and the credentials in the
+// background, so a typo or a wrong token fails here rather than at "Install
+// Hyvä theme" ten minutes in.
+func (m Model) verifyHyva() (tea.Model, tea.Cmd) {
+	repoURL := m.hyvaInputs[hyvaRepoURLField].Value()
+	if err := hyva.ValidateRepositoryURL(repoURL); err != nil {
+		m.setupError = err.Error()
+		m.focusAbsolutePos(len(m.setupInputs) + toggleCount + hyvaRepoURLField)
+		return m, textinput.Blink
+	}
+	m.verifyingHyva = true
+	token := m.hyvaInputs[hyvaAuthTokenField].Value()
+	return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+		return hyvaVerifiedMsg{err: hyva.VerifyCredentials(context.Background(), repoURL, token)}
+	})
+}
+
+// showPreview freezes the form into an install config and moves on to the
+// command preview.
+func (m Model) showPreview() (tea.Model, tea.Cmd) {
+	m.installCfg = m.buildInstallConfig()
+	m.selected.Detector.PrepareSteps(&m.installCfg)
+	m.previewScroll = 0
+	m.phase = phaseSetupPreview
+	return m, nil
+}
+
 // errorLineWidth is how much room a line has inside the bordered box:
 // the window minus its border and padding.
 func (m *Model) errorLineWidth() int {
@@ -605,8 +648,8 @@ func (m *Model) buildInstallConfig() detector.Config {
 		InstallHyva:       m.installHyva,
 	}
 	if m.installHyva {
-		cfg.HyvaRepoURL = m.hyvaInputs[0].Value()
-		cfg.HyvaAuthToken = m.hyvaInputs[1].Value()
+		cfg.HyvaRepoURL = m.hyvaInputs[hyvaRepoURLField].Value()
+		cfg.HyvaAuthToken = m.hyvaInputs[hyvaAuthTokenField].Value()
 	}
 	return cfg
 }
@@ -762,6 +805,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, waitForLog(m.logCh)
 
+	case hyvaVerifiedMsg:
+		m.verifyingHyva = false
+		if msg.err != nil {
+			m.setupError = msg.err.Error()
+			m.focusAbsolutePos(len(m.setupInputs) + toggleCount + hyvaAuthTokenField)
+			return m, textinput.Blink
+		}
+		return m.showPreview()
+
 	case installDoneMsg:
 		m.installErr = msg.err
 		if msg.err != nil {
@@ -871,6 +923,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Handle setup config form
 	if m.phase == phaseSetupConfig {
+		if _, isKey := msg.(tea.KeyMsg); isKey && m.verifyingHyva {
+			return m, nil
+		}
 		if keyMsg, ok := msg.(tea.KeyMsg); ok {
 			// Total fields: admin fields + toggles + (hyva fields if enabled)
 			totalFields := len(m.setupInputs) + toggleCount
@@ -945,11 +1000,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 					}
 					m.setupError = ""
-					m.installCfg = m.buildInstallConfig()
-					m.selected.Detector.PrepareSteps(&m.installCfg)
-					m.previewScroll = 0
-					m.phase = phaseSetupPreview
-					return m, nil
+					if m.installHyva {
+						return m.verifyHyva()
+					}
+					return m.showPreview()
 				}
 				// Move to next field
 				m.focusAbsolutePos(absPos + 1)
@@ -1238,6 +1292,9 @@ func (m Model) View() string {
 			}
 		}
 		b.WriteString("\n")
+		if m.verifyingHyva {
+			b.WriteString(fmt.Sprintf("  %s Checking the Hyvä credentials...\n\n", m.spinner.View()))
+		}
 		if m.setupError != "" {
 			b.WriteString(errorStyle.Render("  ✗ "+m.setupError) + "\n\n")
 		}
