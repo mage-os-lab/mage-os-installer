@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mage-os/mage-os-install/internal/detector"
 	"github.com/mage-os/mage-os-install/internal/magento"
+	"github.com/mage-os/mage-os-install/internal/prereq"
 )
 
 type phase int
@@ -23,6 +24,9 @@ const (
 	phaseNameInput phase = iota
 	phaseDirectoryInput
 	phaseDirectoryConfirm // the chosen directory is not empty
+
+	phaseChecking     // prerequisite checks still running
+	phaseChecksReview // a prerequisite failed or warned
 	phaseDetecting
 	phaseSelection
 	phaseSetupConfig  // admin credentials form
@@ -37,6 +41,11 @@ const (
 // detectionDoneMsg is sent when environment detection completes.
 type detectionDoneMsg struct {
 	envs []detector.DetectedEnvironment
+}
+
+// checksDoneMsg is sent when the prerequisite checks complete.
+type checksDoneMsg struct {
+	results []prereq.Result
 }
 
 // installDoneMsg is sent when installation completes.
@@ -81,6 +90,8 @@ type Model struct {
 	dirInput      textinput.Model
 	dirContents   string // what is already in the chosen directory, if anything
 	envs          []detector.DetectedEnvironment
+	checks        []prereq.Result
+	checksDone    bool
 	cursor        int
 	selected      *detector.DetectedEnvironment
 	setupInputs   []textinput.Model
@@ -143,13 +154,18 @@ func New() Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	// Start detection in the background immediately so results are ready
-	// by the time the user confirms the project name.
-	return tea.Batch(m.spinner.Tick, detectEnvironments, textinput.Blink)
+	// Start detection and the prerequisite checks in the background
+	// immediately so results are ready by the time the user confirms the
+	// project name and directory.
+	return tea.Batch(m.spinner.Tick, detectEnvironments, runPrerequisiteChecks, textinput.Blink)
 }
 
 func detectEnvironments() tea.Msg {
 	return detectionDoneMsg{envs: detector.DetectAll()}
+}
+
+func runPrerequisiteChecks() tea.Msg {
+	return checksDoneMsg{results: prereq.RunAll(prereq.Default())}
 }
 
 // defaultDirectory returns the install directory based on whether the user
@@ -442,16 +458,6 @@ func (m *Model) previewMaxVisible() int {
 	return max(5, m.windowHeight-chrome)
 }
 
-// leaveDirectoryPhase moves on once the directory is settled. Detection may
-// already be done (envs cached) or still running.
-func (m *Model) leaveDirectoryPhase() tea.Cmd {
-	if m.envs != nil {
-		return m.advanceFromDetection()
-	}
-	m.phase = phaseDetecting
-	return nil
-}
-
 // stepLine renders one install step with how long it is taking, or took. The
 // spinner already redraws the screen several times a second, which is what
 // keeps the running step's timer moving.
@@ -498,6 +504,79 @@ func (m *Model) logViewRows() int {
 // logViewBottom is the scroll position that shows the last line.
 func (m *Model) logViewBottom() int {
 	return max(0, len(m.logViewLines())-m.logViewRows())
+}
+
+// continueAfterDirectory moves on once the directory is settled: first past
+// the prerequisite checks, then on to the environment.
+func (m *Model) continueAfterDirectory() tea.Cmd {
+	if !m.checksDone {
+		m.phase = phaseChecking
+		return nil
+	}
+	if prereq.AnyFailed(m.checks) || prereq.AnyWarned(m.checks) {
+		m.phase = phaseChecksReview
+		return nil
+	}
+	return m.continueToEnvironment()
+}
+
+// continueToEnvironment picks the detected environment up, or waits for the
+// detection that is still running.
+func (m *Model) continueToEnvironment() tea.Cmd {
+	if m.envs != nil {
+		return m.advanceFromDetection()
+	}
+	m.phase = phaseDetecting
+	return nil
+}
+
+// checksReviewView lists every prerequisite with its outcome. A failure
+// blocks the install until it is fixed and re-checked; a warning only asks
+// to be read.
+func (m *Model) checksReviewView() string {
+	failed := prereq.AnyFailed(m.checks)
+	title := highlightStyle.Render("⚠ Before we start")
+	if failed {
+		title = errorStyle.Render("✗ Some prerequisites are missing")
+	}
+	lines := []string{title, ""}
+
+	nameWidth := 0
+	for _, result := range m.checks {
+		nameWidth = max(nameWidth, len([]rune(result.Name)))
+	}
+	const marker = 6 // indent, symbol and the gap before the detail
+	detailWidth := 0 // an unknown terminal width leaves the detail on one line
+	if m.windowWidth > 0 {
+		detailWidth = m.errorLineWidth() - nameWidth - marker
+	}
+	for _, result := range m.checks {
+		lines = append(lines, checkLine(result, nameWidth, detailWidth))
+	}
+
+	lines = append(lines, "")
+	if failed {
+		lines = append(lines, dimStyle.Render("Fix the items marked ✗, then press r to check again · q to quit"))
+	} else {
+		lines = append(lines, dimStyle.Render("Enter to continue · r to check again · q to quit"))
+	}
+	return boxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, lines...)) + "\n"
+}
+
+// checkLine renders one prerequisite result, wrapping a long detail under
+// itself so the box fits the terminal.
+func checkLine(result prereq.Result, nameWidth, detailWidth int) string {
+	name := fmt.Sprintf("%-*s", nameWidth, result.Name)
+	indent := "\n" + strings.Repeat(" ", nameWidth+6)
+	detail := strings.ReplaceAll(wrapLine(result.Detail, detailWidth), "\n", indent)
+	switch result.Status {
+	case prereq.Fail:
+		return errorStyle.Render("  ✗ "+name) + "  " + detail
+	case prereq.Warn:
+		return highlightStyle.Render("  ⚠ "+name) + "  " + detail
+	default:
+		return successStyle.Render("  ✓ "+name) + dimStyle.Render("  "+detail)
+	}
 }
 
 // errorLineWidth is how much room a line has inside the bordered box:
@@ -642,7 +721,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.phase == phaseNameInput || m.phase == phaseDirectoryInput {
 			return m, nil
 		}
+		// The prerequisite checks come first; they will pick the envs up.
+		if m.phase == phaseChecking || m.phase == phaseChecksReview {
+			return m, nil
+		}
 		return m, m.advanceFromDetection()
+
+	case checksDoneMsg:
+		m.checks = msg.results
+		m.checksDone = true
+		if m.phase == phaseChecking {
+			return m, m.continueAfterDirectory()
+		}
+		return m, nil
 
 	case sudoCachedMsg:
 		// sudo credentials are now cached (or failed); proceed with install.
@@ -717,7 +808,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.phase = phaseDirectoryConfirm
 					return m, nil
 				}
-				return m, m.leaveDirectoryPhase()
+				return m, m.continueAfterDirectory()
 			default:
 				var cmd tea.Cmd
 				m.dirInput, cmd = m.dirInput.Update(msg)
@@ -730,10 +821,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if keyMsg, ok := msg.(tea.KeyMsg); ok {
 			switch keyMsg.String() {
 			case "y":
-				return m, m.leaveDirectoryPhase()
+				return m, m.continueAfterDirectory()
 			case "n", "esc", "backspace":
 				m.phase = phaseDirectoryInput
 				return m, textinput.Blink
+		}
+	}
+}
+
+	if m.phase == phaseChecksReview {
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.String() {
+			case "r":
+				m.checksDone = false
+				m.phase = phaseChecking
+				return m, runPrerequisiteChecks
+			case "enter":
+				if prereq.AnyFailed(m.checks) {
+					return m, nil
+				}
+				return m, m.continueToEnvironment()
+			case "q", "esc":
+				return m, tea.Quit
 			}
 		}
 	}
@@ -1026,6 +1135,12 @@ func (m Model) View() string {
 		b.WriteString(highlightStyle.Render("  and removes a leftover app/etc/env.php. Install here anyway?"))
 		b.WriteString("\n\n")
 		b.WriteString(dimStyle.Render("y to continue · n to choose another directory · ctrl+c to quit"))
+
+	case phaseChecking:
+		b.WriteString(fmt.Sprintf("%s Checking prerequisites...\n", m.spinner.View()))
+
+	case phaseChecksReview:
+		b.WriteString(m.checksReviewView())
 
 	case phaseDetecting:
 		b.WriteString(fmt.Sprintf("%s Detecting development environments...\n", m.spinner.View()))
