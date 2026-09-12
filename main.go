@@ -6,6 +6,9 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/mage-os/mage-os-install/internal/detector"
+	"github.com/mage-os/mage-os-install/internal/headless"
+	"github.com/mage-os/mage-os-install/internal/options"
 	"github.com/mage-os/mage-os-install/internal/selfupdate"
 	"github.com/mage-os/mage-os-install/internal/tui"
 )
@@ -16,6 +19,7 @@ var version = "dev"
 func main() {
 	doSelfUpdate := flag.Bool("self-update", false, "check for a newer version and update if available")
 	showVersion := flag.Bool("version", false, "print version and exit")
+	opts := options.Bind(flag.CommandLine)
 	flag.Parse()
 
 	if *showVersion {
@@ -31,7 +35,20 @@ func main() {
 		os.Exit(0)
 	}
 
-	p := tea.NewProgram(tui.New())
+	if opts.Yes {
+		workingDirectory, err := os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		if err := headless.Run(opts.WithDefaults(workingDirectory), detector.DetectAll(), os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "\nInstallation failed: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
+	p := tea.NewProgram(tui.NewWithOptions(*opts))
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

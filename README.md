@@ -81,6 +81,17 @@ The installer will walk you through:
 
 Progress is saved to `.mage-os-install.json` in the project directory after every step. If an install stops partway, running the installer again in that directory offers to resume from the first unfinished step; your settings come back pre-filled and only the admin password (and Hyvä token) are asked for again. The file is removed once the install completes.
 
+## Scripting it
+
+Every answer can be given as a flag, and `--yes` runs the install without the interface, which is what CI and demo scripts want:
+
+```sh
+mage-os-install --yes --project my-shop --admin-password 'S0mething-long-enough' \
+  --admin-email me@example.com --sample-data
+```
+
+Without `--yes` the same flags pre-fill the screens. `--env ddev` or `--env warden` picks the environment when both are installed; `--git=false` skips the repository; `--hyva` needs `--hyva-repo-url` and `--hyva-auth-token`. Run `mage-os-install -h` for the full list. A non-interactive run exits with status 1 and the reason when something is missing or the install fails.
+
 ## Wishlist
 
 - Save & reuse a config profile (`~/.mage-os-install.yaml`) so re-running skips prompts.

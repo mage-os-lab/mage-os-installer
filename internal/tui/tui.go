@@ -22,6 +22,8 @@ import (
 	"github.com/mage-os/mage-os-install/internal/prereq"
 
 	"github.com/mage-os/mage-os-install/internal/resume"
+
+	"github.com/mage-os/mage-os-install/internal/options"
 )
 
 type phase int
@@ -95,6 +97,7 @@ type installStep struct {
 
 // Model is the main bubbletea model for the installer TUI.
 type Model struct {
+	opts          options.Options // answers given on the command line, pre-filling the screens
 	phase         phase
 	spinner       spinner.Model
 	nameInput     textinput.Model
@@ -149,20 +152,31 @@ func currentDirName() string {
 	return "my-project"
 }
 
-// New creates the initial TUI model.
+// New creates the initial TUI model with nothing answered in advance.
 func New() Model {
+	return NewWithOptions(options.Defaults)
+}
+
+// NewWithOptions creates the initial TUI model with the command-line answers
+// filled in, so a flag given once does not have to be typed again on screen.
+func NewWithOptions(opts options.Options) Model {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = spinnerStyle
 
 	defaultName := currentDirName()
+	name := defaultName
+	if opts.ProjectName != "" {
+		name = opts.ProjectName
+	}
 
 	ti := textinput.New()
-	ti.SetValue(defaultName)
+	ti.SetValue(name)
 	ti.Focus()
 	ti.CharLimit = 64
 
 	return Model{
+		opts:         opts,
 		phase:        phaseNameInput,
 		spinner:      s,
 		nameInput:    ti,
@@ -203,6 +217,9 @@ func (m *Model) defaultDirectory() string {
 func (m *Model) enterDirectoryPhase() tea.Cmd {
 	di := textinput.New()
 	di.SetValue(m.defaultDirectory())
+	if m.opts.Directory != "" {
+		di.SetValue(m.opts.Directory)
+	}
 	di.Focus()
 	di.CharLimit = 256
 	m.dirInput = di
@@ -293,7 +310,7 @@ func (m *Model) initSetupInputs() {
 	m.setupInputs = make([]textinput.Model, len(setupFieldDefs))
 	for i, f := range setupFieldDefs {
 		ti := textinput.New()
-		ti.SetValue(setupFieldDefaults[i])
+		ti.SetValue(m.setupFieldValue(i))
 		ti.EchoMode = f.echo
 		ti.CharLimit = 128
 		if i == 0 {
@@ -304,9 +321,9 @@ func (m *Model) initSetupInputs() {
 	m.setupFocus = 0
 
 	// Initialize toggles and Hyvä inputs
-	m.installSampleData = false
-	m.initGit = true
-	m.installHyva = false
+	m.installSampleData = m.opts.SampleData
+	m.initGit = m.opts.InitGit
+	m.installHyva = m.opts.Hyva
 	m.inTogglePhase = false
 	m.toggleFocus = sampleDataToggle
 	m.hyvaInputs = make([]textinput.Model, len(hyvaFieldDefs))
@@ -316,6 +333,18 @@ func (m *Model) initSetupInputs() {
 		ti.CharLimit = 256
 		m.hyvaInputs[i] = ti
 	}
+	m.hyvaInputs[0].SetValue(m.opts.HyvaRepoURL)
+	m.hyvaInputs[1].SetValue(m.opts.HyvaAuthToken)
+}
+
+// setupFieldValue is what a form field starts out with: the flag if one was
+// given, otherwise the screen's own default.
+func (m *Model) setupFieldValue(field int) string {
+	given := []string{m.opts.AdminUser, m.opts.AdminPassword, m.opts.AdminEmail, m.opts.AdminFirstname, m.opts.AdminLastname}
+	if field < len(given) && given[field] != "" {
+		return given[field]
+	}
+	return setupFieldDefaults[field]
 }
 
 // focusSetupInput focuses the input at index and blurs all others.
