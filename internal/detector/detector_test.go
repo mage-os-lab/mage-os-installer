@@ -684,3 +684,25 @@ func TestSetupInstallFlags_NameTheBackendFrontname(t *testing.T) {
 		}
 	}
 }
+
+// --- duration hints ---
+
+// TestSteps_SlowStepsCarryAnEstimate verifies the steps that keep the user
+// waiting say so, in both environments.
+func TestSteps_SlowStepsCarryAnEstimate(t *testing.T) {
+	for name, d := range map[string]Detector{"DDEV": &DdevDetector{}, "Warden": &WardenDetector{}} {
+		d.PrepareSteps(&Config{ProjectName: "test-project", InstallSampleData: true, InstallHyva: true})
+		estimates := map[string]string{}
+		for _, step := range d.Steps() {
+			estimates[step.Name] = step.Estimate
+		}
+		for _, slow := range []string{"Create Mage-OS project", "Install Mage-OS", "Install sample data", "Install Hyvä theme"} {
+			if estimates[slow] == "" {
+				t.Errorf("[%s] step %q should carry a duration estimate", name, slow)
+			}
+		}
+		if estimates["Verify installation"] != "" {
+			t.Errorf("[%s] a quick step should not carry an estimate", name)
+		}
+	}
+}

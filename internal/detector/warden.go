@@ -36,22 +36,22 @@ func (d *WardenDetector) buildSteps(config *Config) {
 	d.steps = append(d.steps,
 		Step{Name: "Initialize Warden environment"},
 		Step{Name: "Sign SSL certificates"},
-		Step{Name: "Start environment"},
+		Step{Name: "Start environment", Estimate: EstimateImagePull},
 		Step{Name: "Prepare Composer home"},
-		Step{Name: "Create Mage-OS project"},
+		Step{Name: "Create Mage-OS project", Estimate: EstimateComposer},
 		Step{Name: "Create composer home directory"},
 		Step{Name: "Copy auth.json to composer home"},
-		Step{Name: "Install Mage-OS"},
+		Step{Name: "Install Mage-OS", Estimate: EstimateInstall},
 		Step{Name: "Configure application"},
 		Step{Name: "Set developer mode"},
 	)
 	if config != nil && config.InstallSampleData {
-		d.steps = append(d.steps, Step{Name: "Install sample data"})
+		d.steps = append(d.steps, Step{Name: "Install sample data", Estimate: EstimateSample})
 	}
 	if config != nil && config.InstallHyva {
 		d.steps = append(d.steps,
 			Step{Name: "Configure Hyvä repository"},
-			Step{Name: "Install Hyvä theme"},
+			Step{Name: "Install Hyvä theme", Estimate: EstimateHyva},
 			Step{Name: "Enable Hyvä modules"},
 		)
 	}

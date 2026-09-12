@@ -16,8 +16,19 @@ type DetectorInfo struct {
 // Step represents a single named installation step.
 type Step struct {
 	Name string
+	// Estimate says how long the step tends to take, for the steps where the
+	// wait is long enough to look like a hang. Empty for quick steps.
+	Estimate string
 }
 
+// Duration hints for the steps that keep the user waiting.
+const (
+	EstimateImagePull = "a minute or two on the first run, pulls images"
+	EstimateComposer  = "several minutes, downloads Mage-OS"
+	EstimateInstall   = "a few minutes"
+	EstimateSample    = "several minutes"
+	EstimateHyva      = "a minute or two"
+)
 // BackendFrontnameFlag is the setup:install flag that decides the admin URL.
 const BackendFrontnameFlag = "--backend-frontname"
 
