@@ -85,6 +85,7 @@ atlassian*
 /generated/*
 !/generated/.htaccess
 .DS_Store
+/.mage-os-install.log
 `
 
 // initGitRepository turns the project directory into a Git repository and gives
