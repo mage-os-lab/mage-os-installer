@@ -313,6 +313,46 @@ func sudoWarningLines(envName string) []string {
 	}
 }
 
+// successSummaryLines tell the user where the store is and how to get into it.
+// The admin password is masked on the form, so someone who accepted the
+// default may never have seen it, and the admin URL depends on the backend
+// front name the environment chose.
+func (m *Model) successSummaryLines() []string {
+	const labelWidth = 11
+	row := func(label, value string) string {
+		return fmt.Sprintf("  %-*s %s", labelWidth, label, value)
+	}
+	baseURL := m.selected.Detector.BaseURL(m.installCfg.ProjectName)
+	return []string{
+		successStyle.Render("✓ " + m.selected.Env.Name + " installed successfully!"),
+		"",
+		row("Storefront", highlightStyle.Render(baseURL)),
+		row("Admin", highlightStyle.Render(m.adminURL(baseURL))),
+		row("Login", m.installCfg.AdminUser+" / "+m.installCfg.AdminPassword),
+		row("Project", m.installCfg.Directory),
+		"",
+		dimStyle.Render("  Run Magento commands from the project directory with:"),
+		"  " + m.selected.Detector.MagentoCommand() + " <command>",
+	}
+}
+
+// adminURL is the storefront URL plus the backend front name the store was
+// installed with.
+func (m *Model) adminURL(baseURL string) string {
+	flags := m.selected.Detector.SetupInstallFlags(&m.installCfg)
+	return strings.TrimRight(baseURL, "/") + "/" + setupFlagValue(flags, detector.BackendFrontnameFlag)
+}
+
+// setupFlagValue looks a flag up by name in the setup:install flag list.
+func setupFlagValue(flags []detector.SetupFlag, name string) string {
+	for _, flag := range flags {
+		if flag.Flag == name {
+			return flag.Value
+		}
+	}
+	return ""
+}
+
 // errorLineWidth is how much room a line has inside the bordered box:
 // the window minus its border and padding.
 func (m *Model) errorLineWidth() int {
@@ -947,14 +987,12 @@ func (m Model) View() string {
 		}
 
 	case phaseOpenBrowser:
-		url := m.selected.Detector.BaseURL(m.installCfg.ProjectName)
-		lines := []string{
-			successStyle.Render("✓ " + m.selected.Env.Name + " installed successfully!"),
+		lines := append(m.successSummaryLines(),
 			"",
-			"Open " + highlightStyle.Render(url) + " in your browser?",
+			"Open the storefront in your browser?",
 			"",
 			dimStyle.Render("y to open · n/enter to skip"),
-		}
+		)
 		b.WriteString(boxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, lines...)))
 		b.WriteString("\n")
 
@@ -975,12 +1013,9 @@ func (m Model) View() string {
 			lines = append(lines, "", dimStyle.Render("Press r to retry, enter/q to exit."))
 			b.WriteString(boxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, lines...)))
 		} else {
-			lines := []string{
-				successStyle.Render("✓ " + m.selected.Env.Name + " installed successfully!"),
-			}
+			lines := m.successSummaryLines()
 			if m.browserOpened {
-				url := m.selected.Detector.BaseURL(m.installCfg.ProjectName)
-				lines = append(lines, "", "Opened "+highlightStyle.Render(url)+" in your browser.")
+				lines = append(lines, "", "Opened the storefront in your browser.")
 			}
 			lines = append(lines, "", dimStyle.Render("Press enter to exit."))
 			b.WriteString(boxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, lines...)))

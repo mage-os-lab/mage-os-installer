@@ -58,8 +58,12 @@ func (d *WardenDetector) buildSteps(config *Config) {
 	d.steps = append(d.steps, Step{Name: "Verify installation"})
 }
 
+func (d *WardenDetector) MagentoCommand() string {
+	return "warden env exec php-fpm bin/magento"
+}
+
 func (d *WardenDetector) SetupCommandPrefix() string {
-	return "warden env exec php-fpm bin/magento setup:install"
+	return d.MagentoCommand() + " setup:install"
 }
 
 func (d *WardenDetector) BaseURL(projectName string) string {
@@ -68,7 +72,7 @@ func (d *WardenDetector) BaseURL(projectName string) string {
 
 func (d *WardenDetector) SetupInstallFlags(config *Config) []SetupFlag {
 	return []SetupFlag{
-		{Flag: "--backend-frontname", Value: "backend"},
+		{Flag: BackendFrontnameFlag, Value: "backend"},
 		{Flag: "--amqp-host", Value: "rabbitmq"},
 		{Flag: "--amqp-port", Value: "5672"},
 		{Flag: "--amqp-user", Value: "guest"},
