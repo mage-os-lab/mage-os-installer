@@ -29,18 +29,22 @@ func (d *WardenDetector) PrepareSteps(config *Config) {
 }
 
 func (d *WardenDetector) buildSteps(config *Config) {
-	d.steps = []Step{
-		{Name: "Initialize Warden environment"},
-		{Name: "Sign SSL certificates"},
-		{Name: "Start environment"},
-		{Name: "Prepare Composer home"},
-		{Name: "Create Mage-OS project"},
-		{Name: "Create composer home directory"},
-		{Name: "Copy auth.json to composer home"},
-		{Name: "Install Mage-OS"},
-		{Name: "Configure application"},
-		{Name: "Set developer mode"},
+	d.steps = nil
+	if config != nil && config.InitGit {
+		d.steps = append(d.steps, Step{Name: "Initialize Git repository"})
 	}
+	d.steps = append(d.steps,
+		Step{Name: "Initialize Warden environment"},
+		Step{Name: "Sign SSL certificates"},
+		Step{Name: "Start environment"},
+		Step{Name: "Prepare Composer home"},
+		Step{Name: "Create Mage-OS project"},
+		Step{Name: "Create composer home directory"},
+		Step{Name: "Copy auth.json to composer home"},
+		Step{Name: "Install Mage-OS"},
+		Step{Name: "Configure application"},
+		Step{Name: "Set developer mode"},
+	)
 	if config != nil && config.InstallSampleData {
 		d.steps = append(d.steps, Step{Name: "Install sample data"})
 	}
@@ -50,9 +54,6 @@ func (d *WardenDetector) buildSteps(config *Config) {
 			Step{Name: "Install Hyvä theme"},
 			Step{Name: "Enable Hyvä modules"},
 		)
-	}
-	if config != nil && config.InitGit {
-		d.steps = append(d.steps, Step{Name: "Initialize Git repository"})
 	}
 	d.steps = append(d.steps, Step{Name: "Verify installation"})
 }
@@ -292,11 +293,15 @@ func (d *WardenDetector) Install(config *Config) error {
 		})
 	}
 
+	// The Git repository is set up before anything is copied into the
+	// directory: the copy runs inside the container and leaves the directory
+	// owned by the container user, after which the installer cannot write to
+	// it any more.
 	if config.InitGit {
-		allSteps = append(allSteps, func() error {
+		allSteps = append([]func() error{func() error {
 			initGitRepository(config)
 			return nil
-		})
+		}}, allSteps...)
 	}
 
 	for i, fn := range allSteps {

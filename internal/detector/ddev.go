@@ -37,20 +37,24 @@ func (d *DdevDetector) PrepareSteps(config *Config) {
 }
 
 func (d *DdevDetector) buildSteps(config *Config) {
-	d.steps = []Step{
-		{Name: "Configure DDEV project"},
-		{Name: "Install OpenSearch addon"},
-		{Name: "Install Redis addon"},
-		{Name: "Install Cron addon"},
-		{Name: "Install RabbitMQ addon"},
-		{Name: "Start DDEV"},
-		{Name: "Apply RabbitMQ config"},
-		{Name: "Create Mage-OS project"},
-		{Name: "Copy project files"},
-		{Name: "Create composer home directory"},
-		{Name: "Copy auth.json"},
-		{Name: "Install Mage-OS"},
+	d.steps = nil
+	if config != nil && config.InitGit {
+		d.steps = append(d.steps, Step{Name: "Initialize Git repository"})
 	}
+	d.steps = append(d.steps,
+		Step{Name: "Configure DDEV project"},
+		Step{Name: "Install OpenSearch addon"},
+		Step{Name: "Install Redis addon"},
+		Step{Name: "Install Cron addon"},
+		Step{Name: "Install RabbitMQ addon"},
+		Step{Name: "Start DDEV"},
+		Step{Name: "Apply RabbitMQ config"},
+		Step{Name: "Create Mage-OS project"},
+		Step{Name: "Copy project files"},
+		Step{Name: "Create composer home directory"},
+		Step{Name: "Copy auth.json"},
+		Step{Name: "Install Mage-OS"},
+	)
 	if config != nil && config.InstallSampleData {
 		d.steps = append(d.steps, Step{Name: "Install sample data"})
 	}
@@ -60,9 +64,6 @@ func (d *DdevDetector) buildSteps(config *Config) {
 			Step{Name: "Install Hyvä theme"},
 			Step{Name: "Enable Hyvä modules"},
 		)
-	}
-	if config != nil && config.InitGit {
-		d.steps = append(d.steps, Step{Name: "Initialize Git repository"})
 	}
 	d.steps = append(d.steps, Step{Name: "Verify installation"})
 }
@@ -127,6 +128,20 @@ func (d *DdevDetector) Install(config *Config) error {
 
 	composerCreateProjectIdx := 7
 
+	// The Git repository is set up before anything is copied into the
+	// directory: the copy runs inside the container and leaves the directory
+	// owned by the container user, after which the installer cannot write to
+	// it any more.
+	stepOffset := 0
+	if config.InitGit {
+		stepOffset = 1
+		if config.StartFromStep == 0 {
+			stepStart(config, 0)
+			initGitRepository(config)
+			stepDone(config, 0)
+		}
+	}
+
 	steps := [][]string{
 		{
 			"ddev", "config",
@@ -154,10 +169,11 @@ func (d *DdevDetector) Install(config *Config) error {
 	}
 
 	for i, args := range steps {
-		if i < config.StartFromStep {
+		idx := i + stepOffset
+		if idx < config.StartFromStep {
 			continue
 		}
-		stepStart(config, i)
+		stepStart(config, idx)
 		var err error
 		if i == composerCreateProjectIdx {
 			err = runComposerCreateProject(config, args[0], args[1:])
@@ -168,7 +184,7 @@ func (d *DdevDetector) Install(config *Config) error {
 		if err != nil {
 			return fmt.Errorf("step %q failed: %w", strings.Join(args, " "), err)
 		}
-		stepDone(config, i)
+		stepDone(config, idx)
 	}
 
 	// After ddev start, query the actual primary URL so we use
@@ -178,7 +194,7 @@ func (d *DdevDetector) Install(config *Config) error {
 		logf(config, "▸ Detected primary URL: %s", url)
 	}
 
-	authIdx := len(steps)
+	authIdx := len(steps) + stepOffset
 	if authIdx >= config.StartFromStep {
 		stepStart(config, authIdx)
 		if err := copyAuthJSON(config); err != nil {
@@ -187,7 +203,7 @@ func (d *DdevDetector) Install(config *Config) error {
 		stepDone(config, authIdx)
 	}
 
-	magentoIdx := len(steps) + 1
+	magentoIdx := len(steps) + 1 + stepOffset
 	if magentoIdx >= config.StartFromStep {
 		stepStart(config, magentoIdx)
 		if err := clearStaleInstallArtifacts(config); err != nil {
@@ -284,16 +300,6 @@ func (d *DdevDetector) Install(config *Config) error {
 				return fmt.Errorf("cache:flush failed: %w", err)
 			}
 			stepDone(config, hyvaEnableIdx)
-		}
-		nextIdx++
-	}
-
-	if config.InitGit {
-		gitIdx := nextIdx
-		if gitIdx >= config.StartFromStep {
-			stepStart(config, gitIdx)
-			initGitRepository(config)
-			stepDone(config, gitIdx)
 		}
 	}
 

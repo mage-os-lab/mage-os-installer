@@ -105,14 +105,14 @@ func containsLine(content, want string) bool {
 	return false
 }
 
-func TestSteps_EndWithGitBeforeVerificationWhenRequested(t *testing.T) {
+func TestSteps_StartWithGitWhenRequested(t *testing.T) {
 	for name, d := range map[string]Detector{"DDEV": &DdevDetector{}, "Warden": &WardenDetector{}} {
 		d.PrepareSteps(&Config{ProjectName: "test-project", InitGit: true})
-		steps := d.Steps()
 
-		last := []string{steps[len(steps)-2].Name, steps[len(steps)-1].Name}
-		if last[0] != "Initialize Git repository" || last[1] != "Verify installation" {
-			t.Errorf("[%s] last steps are %q, expected the Git step just before verification", name, last)
+		// The repository has to exist before anything is copied into the
+		// directory, or the installer can no longer write to it.
+		if first := d.Steps()[0].Name; first != "Initialize Git repository" {
+			t.Errorf("[%s] first step is %q, expected the Git step to come first", name, first)
 		}
 	}
 }
