@@ -1291,7 +1291,7 @@ func TestGit_TogglingDoesNotTouchTheOtherOptions(t *testing.T) {
 func TestSetupConfig_ExplainsTheGitOption(t *testing.T) {
 	view := toOptionsPage(advanceToSetupConfig(t)).View()
 
-	for _, want := range []string{"Initialize Git", "git init", ".gitignore"} {
+	for _, want := range []string{"Initialize Git", "git init"} {
 		if !contains(view, want) {
 			t.Errorf("setup form should explain the Git option, missing %q", want)
 		}

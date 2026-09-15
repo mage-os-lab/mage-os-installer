@@ -57,7 +57,7 @@ func Bind(fs *flag.FlagSet) *Options {
 	fs.StringVar(&o.AdminFirstname, "admin-firstname", o.AdminFirstname, "admin first name")
 	fs.StringVar(&o.AdminLastname, "admin-lastname", o.AdminLastname, "admin last name")
 	fs.BoolVar(&o.SampleData, "sample-data", o.SampleData, "install the sample data")
-	fs.BoolVar(&o.InitGit, "git", o.InitGit, "run git init and write a .gitignore")
+	fs.BoolVar(&o.InitGit, "git", o.InitGit, "run git init in the project directory")
 	fs.BoolVar(&o.Hyva, "hyva", o.Hyva, "install the Hyvä theme (needs --hyva-repo-url and --hyva-auth-token)")
 	fs.StringVar(&o.HyvaRepoURL, "hyva-repo-url", "", "Hyvä Private Packagist repository URL")
 	fs.StringVar(&o.HyvaAuthToken, "hyva-auth-token", "", "Hyvä Private Packagist auth token")

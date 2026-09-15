@@ -1,106 +1,15 @@
 package detector
 
 import (
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 )
 
-// gitignore is Magento's own .gitignore with the two changes asked for in
-// https://github.com/mage-os-lab/mage-os-installer/issues/1: /dev is ignored,
-// and app/etc/config.php is tracked so every checkout knows which modules to
-// enable.
-const gitignore = `/.buildpath
-/.cache
-/.metadata
-/.project
-/.settings
-/.vscode
-atlassian*
-/nbproject
-/robots.txt
-/pub/robots.txt
-/sitemap
-/sitemap.xml
-/pub/sitemap
-/pub/sitemap.xml
-/.idea
-/.gitattributes
-/app/config_sandbox
-/app/etc/env.php
-/dev
-/app/code/Magento/TestModule*
-/lib/internal/flex/uploader/.actionScriptProperties
-/lib/internal/flex/uploader/.flexProperties
-/lib/internal/flex/uploader/.project
-/lib/internal/flex/uploader/.settings
-/lib/internal/flex/varien/.actionScriptProperties
-/lib/internal/flex/varien/.flexLibProperties
-/lib/internal/flex/varien/.project
-/lib/internal/flex/varien/.settings
-/node_modules
-/.grunt
-/Gruntfile.js
-/package.json
-/.php_cs
-/.php_cs.cache
-/.php-cs-fixer.php
-/.php-cs-fixer.cache
-/grunt-config.json
-/pub/media/*.*
-!/pub/media/.htaccess
-/pub/media/attribute/*
-!/pub/media/attribute/.htaccess
-/pub/media/analytics/*
-/pub/media/catalog/*
-!/pub/media/catalog/.htaccess
-/pub/media/customer/*
-!/pub/media/customer/.htaccess
-/pub/media/downloadable/*
-!/pub/media/downloadable/.htaccess
-/pub/media/favicon/*
-/pub/media/import/*
-!/pub/media/import/.htaccess
-/pub/media/logo/*
-/pub/media/custom_options/*
-!/pub/media/custom_options/.htaccess
-/pub/media/theme/*
-/pub/media/theme_customization/*
-!/pub/media/theme_customization/.htaccess
-/pub/media/wysiwyg/*
-!/pub/media/wysiwyg/.htaccess
-/pub/media/tmp/*
-!/pub/media/tmp/.htaccess
-/pub/media/captcha/*
-/pub/media/sitemap/*
-!/pub/media/sitemap/.htaccess
-/pub/static/*
-!/pub/static/.htaccess
-
-/var/*
-!/var/.htaccess
-/vendor/*
-!/vendor/.htaccess
-/generated/*
-!/generated/.htaccess
-.DS_Store
-/.mage-os-install.log
-/.mage-os-install.json
-`
-
-// initGitRepository turns the project directory into a Git repository and gives
-// it a .gitignore. Neither half overwrites what is already there, and neither
-// can fail the install: the store is already standing by the time this runs,
-// and it is not worth losing over a .gitignore. Whatever goes wrong is
-// reported instead.
+// initGitRepository turns the project directory into a Git repository. What
+// to ignore is left to the .gitignore Mage-OS ships with the project. It
+// cannot fail the install: a store without a repository is still worth having.
+// Whatever goes wrong is reported instead.
 func initGitRepository(config *Config) {
-	initGitDirectory(config)
-	writeGitignore(config)
-}
-
-// initGitDirectory runs git init, unless there is nothing to gain by it.
-func initGitDirectory(config *Config) {
 	if _, err := exec.LookPath("git"); err != nil {
 		logf(config, "⚠ Git is not installed, skipping git init")
 		return
@@ -123,18 +32,4 @@ func isInsideGitWorkTree(dir string) bool {
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	return err == nil && strings.TrimSpace(string(out)) == "true"
-}
-
-// writeGitignore adds the .gitignore, leaving one that already exists alone.
-func writeGitignore(config *Config) {
-	path := filepath.Join(config.Directory, ".gitignore")
-	if _, err := os.Stat(path); err == nil {
-		logf(config, "▸ .gitignore already exists, leaving it untouched")
-		return
-	}
-
-	logf(config, "▸ Writing .gitignore")
-	if err := os.WriteFile(path, []byte(gitignore), 0644); err != nil {
-		logf(config, "⚠ Could not write .gitignore: %v", err)
-	}
 }

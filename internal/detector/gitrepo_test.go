@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestInitGitRepository_CreatesARepositoryWithAGitignore(t *testing.T) {
+func TestInitGitRepository_CreatesARepository(t *testing.T) {
 	dir := t.TempDir()
 	var lines []string
 
@@ -16,24 +16,16 @@ func TestInitGitRepository_CreatesARepositoryWithAGitignore(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
 		t.Errorf("expected a Git repository in %s: %v", dir, err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".gitignore")); err != nil {
-		t.Errorf("expected a .gitignore in %s: %v", dir, err)
-	}
 }
 
-func TestInitGitRepository_LeavesAnExistingGitignoreAlone(t *testing.T) {
+func TestInitGitRepository_LeavesTheGitignoreToMageOS(t *testing.T) {
 	dir := t.TempDir()
-	writeArtifacts(t, dir, ".gitignore")
 	var lines []string
 
 	initGitRepository(recordingConfig(dir, &lines))
 
-	content, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
-	if err != nil {
-		t.Fatalf("could not read .gitignore: %v", err)
-	}
-	if string(content) == gitignore {
-		t.Error(".gitignore was overwritten, expected the existing one to be kept")
+	if _, err := os.Stat(filepath.Join(dir, ".gitignore")); err == nil {
+		t.Error("a .gitignore was written, expected Mage-OS to provide it")
 	}
 }
 
@@ -52,9 +44,6 @@ func TestInitGitRepository_DoesNotNestInsideAnExistingRepository(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(project, ".git")); err == nil {
 		t.Error("a second repository was created inside an existing one")
 	}
-	if _, err := os.Stat(filepath.Join(project, ".gitignore")); err != nil {
-		t.Errorf("expected the .gitignore to be written anyway: %v", err)
-	}
 }
 
 func TestInitGitRepository_ReportsAProblemInsteadOfFailingTheInstall(t *testing.T) {
@@ -70,8 +59,8 @@ func TestInitGitRepository_ReportsAProblemInsteadOfFailingTheInstall(t *testing.
 	var lines []string
 	initGitRepository(recordingConfig(dir, &lines))
 
-	if !strings.Contains(strings.Join(lines, "\n"), "Could not write .gitignore") {
-		t.Errorf("log was %q, expected it to report the failed write", lines)
+	if !strings.Contains(strings.Join(lines, "\n"), "git init failed") {
+		t.Errorf("log was %q, expected it to report the failed git init", lines)
 	}
 }
 
@@ -79,30 +68,6 @@ func TestIsInsideGitWorkTree_IsFalseForAPlainDirectory(t *testing.T) {
 	if isInsideGitWorkTree(t.TempDir()) {
 		t.Error("a fresh directory should not be inside a work tree")
 	}
-}
-
-func TestGitignore_TracksTheModuleList(t *testing.T) {
-	if strings.Contains(gitignore, "/app/etc/config.php") {
-		t.Error("app/etc/config.php should be tracked, so every checkout knows which modules to enable")
-	}
-}
-
-func TestGitignore_IgnoresTheDevFolderAndTheDeploymentConfig(t *testing.T) {
-	for _, want := range []string{"/dev", "/app/etc/env.php", "/vendor/*", "/generated/*", "/var/*", "/.mage-os-install.log", "/.mage-os-install.json"} {
-		if !containsLine(gitignore, want) {
-			t.Errorf("expected .gitignore to contain %q", want)
-		}
-	}
-}
-
-// containsLine reports whether content has want as a complete line.
-func containsLine(content, want string) bool {
-	for _, line := range strings.Split(content, "\n") {
-		if line == want {
-			return true
-		}
-	}
-	return false
 }
 
 func TestSteps_StartWithGitWhenRequested(t *testing.T) {
