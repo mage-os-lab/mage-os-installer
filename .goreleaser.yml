@@ -20,3 +20,10 @@ archives:
 
 checksum:
   name_template: 'checksums.txt'
+
+# Releases are immutable once published, so the binaries go into a draft
+# written by hand, which is published after checking them.
+release:
+  use_existing_draft: true
+  draft: true
+  mode: keep-existing
