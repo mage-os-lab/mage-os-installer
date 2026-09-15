@@ -655,13 +655,31 @@ func TestDdevSetupInstallFlags_KeepsSpecialCharactersInThePassword(t *testing.T)
 
 // --- how bin/magento is run ---
 
-// TestMagentoCommand_IsWhatTheSetupPreviewShows verifies the preview prefix and
-// the command handed to the user after the install are the same thing.
-func TestMagentoCommand_IsWhatTheSetupPreviewShows(t *testing.T) {
+// TestMagentoCommand_IsWhatTheSetupPreviewShowsOnWarden verifies the preview
+// prefix and the command handed to the user after the install are the same
+// thing where no raw exec is needed.
+func TestMagentoCommand_IsWhatTheSetupPreviewShowsOnWarden(t *testing.T) {
+	d := &WardenDetector{}
+
+	if want := d.MagentoCommand() + " setup:install"; d.SetupCommandPrefix() != want {
+		t.Errorf("SetupCommandPrefix() = %q, want %q", d.SetupCommandPrefix(), want)
+	}
+}
+
+// TestMagentoCommand_UsesDdevPhpForTheUser verifies DDEV users are handed the
+// short command instead of the raw exec the installer needs.
+func TestMagentoCommand_UsesDdevPhpForTheUser(t *testing.T) {
+	d := &DdevDetector{}
+
+	if d.MagentoCommand() != "ddev php bin/magento" {
+		t.Errorf("MagentoCommand() = %q, want %q", d.MagentoCommand(), "ddev php bin/magento")
+	}
+}
+
+// TestMagentoCommand_EndsInBinMagento verifies the user can append any
+// Magento command to it.
+func TestMagentoCommand_EndsInBinMagento(t *testing.T) {
 	for name, d := range map[string]Detector{"DDEV": &DdevDetector{}, "Warden": &WardenDetector{}} {
-		if want := d.MagentoCommand() + " setup:install"; d.SetupCommandPrefix() != want {
-			t.Errorf("[%s] SetupCommandPrefix() = %q, want %q", name, d.SetupCommandPrefix(), want)
-		}
 		if !strings.HasSuffix(d.MagentoCommand(), "bin/magento") {
 			t.Errorf("[%s] MagentoCommand() = %q, expected it to end in bin/magento", name, d.MagentoCommand())
 		}

@@ -1405,14 +1405,28 @@ func TestDirectory_WarnsWhenItAlreadyHasContent(t *testing.T) {
 	}
 }
 
-// TestSuccess_ShowsTheAdminLogin verifies the credentials are shown, since the
-// password was masked on the form.
-func TestSuccess_ShowsTheAdminLogin(t *testing.T) {
+// TestSuccess_HidesThePasswordTheUserKeptHidden verifies the success screen
+// respects the masked password field.
+func TestSuccess_HidesThePasswordTheUserKeptHidden(t *testing.T) {
 	m := installedModel(t, phaseOpenBrowser)
 	view := m.View()
 
-	want := m.installCfg.AdminUser + " / " + m.installCfg.AdminPassword
-	if !contains(view, want) {
+	if want := m.installCfg.AdminUser + " / " + maskedPassword; !contains(view, want) {
+		t.Errorf("success screen should contain the masked login %q", want)
+	}
+	if contains(view, m.installCfg.AdminPassword) {
+		t.Errorf("success screen should not show the hidden password %q", m.installCfg.AdminPassword)
+	}
+}
+
+// TestSuccess_ShowsThePasswordTheUserRevealed verifies the clear text shows
+// when the user chose to see it on the form.
+func TestSuccess_ShowsThePasswordTheUserRevealed(t *testing.T) {
+	m := installedModel(t, phaseOpenBrowser)
+	m.passwordRevealed = true
+	view := m.View()
+
+	if want := m.installCfg.AdminUser + " / " + m.installCfg.AdminPassword; !contains(view, want) {
 		t.Errorf("success screen should contain the login %q", want)
 	}
 }

@@ -532,9 +532,8 @@ func sudoWarningLines(envName string) []string {
 }
 
 // successSummaryLines tell the user where the store is and how to get into it.
-// The admin password is masked on the form, so someone who accepted the
-// default may never have seen it, and the admin URL depends on the backend
-// front name the environment chose.
+// The admin password only shows when the user revealed it on the form, and the
+// admin URL depends on the backend front name the environment chose.
 func (m *Model) successSummaryLines() []string {
 	const labelWidth = 11
 	row := func(label, value string) string {
@@ -546,12 +545,25 @@ func (m *Model) successSummaryLines() []string {
 		"",
 		row("Storefront", highlightStyle.Render(baseURL)),
 		row("Admin", highlightStyle.Render(m.adminURL(baseURL))),
-		row("Login", m.installCfg.AdminUser+" / "+m.installCfg.AdminPassword),
+		row("Login", m.installCfg.AdminUser+" / "+m.summaryPassword()),
 		row("Project", m.installCfg.Directory),
 		"",
 		dimStyle.Render("  Run Magento commands from the project directory with:"),
 		"  " + m.selected.Detector.MagentoCommand() + " <command>",
 	}
+}
+
+// maskedPassword stands in for a hidden password. Its length is fixed so it
+// does not give away the length of the real one.
+const maskedPassword = "••••••••"
+
+// summaryPassword follows the choice made on the form: the clear text when the
+// user revealed the password there, a mask when they kept it hidden.
+func (m *Model) summaryPassword() string {
+	if m.passwordRevealed {
+		return m.installCfg.AdminPassword
+	}
+	return maskedPassword
 }
 
 // adminURL is the storefront URL plus the backend front name the store was

@@ -69,11 +69,13 @@ func (d *DdevDetector) buildSteps(config *Config) {
 }
 
 func (d *DdevDetector) MagentoCommand() string {
-	return strings.Join(ddevExecCommand("bin/magento"), " ")
+	return "ddev php bin/magento"
 }
 
+// SetupCommandPrefix keeps raw exec, unlike MagentoCommand: it is the command
+// the installer runs, and the admin password it carries must survive verbatim.
 func (d *DdevDetector) SetupCommandPrefix() string {
-	return d.MagentoCommand() + " setup:install"
+	return strings.Join(ddevExecCommand("bin/magento", "setup:install"), " ")
 }
 
 func (d *DdevDetector) BaseURL(projectName string) string {

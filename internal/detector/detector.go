@@ -51,7 +51,7 @@ type Detector interface {
 	// SetupInstallFlags returns the ordered list of flags for bin/magento setup:install.
 	SetupInstallFlags(config *Config) []SetupFlag
 	// MagentoCommand returns how bin/magento is run in this environment
-	// (e.g. "ddev exec --raw -- bin/magento").
+	// for the user to type (e.g. "ddev php bin/magento").
 	MagentoCommand() string
 	// SetupCommandPrefix returns the command prefix shown in the setup preview
 	// (e.g. "ddev exec bin/magento setup:install").
