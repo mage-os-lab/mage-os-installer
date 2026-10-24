@@ -64,6 +64,74 @@ func TestInitGitRepository_ReportsAProblemInsteadOfFailingTheInstall(t *testing.
 	}
 }
 
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("could not write %s: %v", path, err)
+	}
+}
+
+func TestAddGitignoreFromSample_CopiesTheSample(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".gitignore.sample"), "/vendor/\n")
+	var lines []string
+
+	addGitignoreFromSample(recordingConfig(dir, &lines), dir)
+
+	got, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("expected a .gitignore: %v", err)
+	}
+	if string(got) != "/vendor/\n" {
+		t.Errorf(".gitignore is %q, expected a copy of the sample", got)
+	}
+	if !strings.Contains(strings.Join(lines, "\n"), "Copied .gitignore.sample to .gitignore") {
+		t.Errorf("log was %q, expected it to report the copy", lines)
+	}
+}
+
+func TestAddGitignoreFromSample_LeavesAnExistingGitignoreAlone(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".gitignore.sample"), "/vendor/\n")
+	writeFile(t, filepath.Join(dir, ".gitignore"), "mine\n")
+	var lines []string
+
+	addGitignoreFromSample(recordingConfig(dir, &lines), dir)
+
+	got, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if string(got) != "mine\n" {
+		t.Errorf(".gitignore is %q, expected the existing one to be kept", got)
+	}
+	if !strings.Contains(strings.Join(lines, "\n"), "already has a .gitignore") {
+		t.Errorf("log was %q, expected it to say the .gitignore was kept", lines)
+	}
+}
+
+func TestAddGitignoreFromSample_SkipsWithoutASample(t *testing.T) {
+	dir := t.TempDir()
+	var lines []string
+
+	addGitignoreFromSample(recordingConfig(dir, &lines), dir)
+
+	if _, err := os.Stat(filepath.Join(dir, ".gitignore")); err == nil {
+		t.Error("a .gitignore was written without a sample to copy")
+	}
+	if !strings.Contains(strings.Join(lines, "\n"), "no .gitignore.sample") {
+		t.Errorf("log was %q, expected it to say there is no sample", lines)
+	}
+}
+
+func TestAddGitignoreFromSample_ReportsAProblemInsteadOfFailingTheInstall(t *testing.T) {
+	dir := t.TempDir()
+	var lines []string
+
+	addGitignoreFromSample(recordingConfig(dir, &lines), filepath.Join(dir, "missing"))
+
+	if !strings.Contains(strings.Join(lines, "\n"), "Could not add .gitignore") {
+		t.Errorf("log was %q, expected it to report the problem", lines)
+	}
+}
+
 func TestIsInsideGitWorkTree_IsFalseForAPlainDirectory(t *testing.T) {
 	if isInsideGitWorkTree(t.TempDir()) {
 		t.Error("a fresh directory should not be inside a work tree")

@@ -900,8 +900,8 @@ func (m *Model) optionsView(labelWidth int) string {
 		"the start. Recommended for a first install.")
 	b.WriteString("\n")
 	toggle(initGitToggle, "Initialize Git", m.initGit,
-		"Runs git init in the project directory. An existing repository is left",
-		"alone.")
+		"Runs git init in the project directory and adds the Mage-OS .gitignore.",
+		"An existing repository or .gitignore is left alone.")
 	return b.String()
 }
 

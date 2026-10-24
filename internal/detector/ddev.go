@@ -134,6 +134,7 @@ func (d *DdevDetector) Install(config *Config) error {
 	d.buildSteps(config)
 
 	composerCreateProjectIdx := 7
+	copyProjectFilesIdx := 8
 
 	// The Git repository is set up before anything is copied into the
 	// directory: the copy runs inside the container and leaves the directory
@@ -171,6 +172,7 @@ func (d *DdevDetector) Install(config *Config) error {
 			"mage-os/project-community-edition",
 			"/tmp/mage-os-project",
 		),
+		// 8: copy project files, then the .gitignore when Git is on
 		ddevExecCommand("bash", "-c", "cp -a /tmp/mage-os-project/. /var/www/html/"),
 		ddevExecCommand("mkdir", "-p", "/var/www/html/var/composer_home/"),
 	}
@@ -190,6 +192,9 @@ func (d *DdevDetector) Install(config *Config) error {
 		}
 		if err != nil {
 			return fmt.Errorf("step %q failed: %w", strings.Join(args, " "), err)
+		}
+		if i == copyProjectFilesIdx && config.InitGit {
+			addGitignoreFromSample(config, containerProjectDir, ddevExecCommand()...)
 		}
 		stepDone(config, idx)
 	}

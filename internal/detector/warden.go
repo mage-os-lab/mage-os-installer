@@ -167,10 +167,16 @@ func (d *WardenDetector) Install(config *Config) error {
 			if err := runComposerCreateProject(config, "warden", composerArgs); err != nil {
 				return err
 			}
-			return run(
+			if err := run(
 				"warden", "env", "exec", "php-fpm",
 				"bash", "-c", "cp -a /tmp/mage-os-project/. /var/www/html/",
-			)
+			); err != nil {
+				return err
+			}
+			if config.InitGit {
+				addGitignoreFromSample(config, containerProjectDir, "warden", "env", "exec", "php-fpm")
+			}
+			return nil
 		},
 		// 5: Create composer home directory
 		func() error {
